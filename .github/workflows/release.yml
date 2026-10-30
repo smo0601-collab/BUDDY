@@ -1,4 +1,4 @@
-# Erstellt automatisch ein GitHub-Release für die aktuelle Firmware-Version.
+# Erstellt bzw. aktualisiert automatisch das GitHub-Release der aktuellen Firmware-Version.
 #
 # Auslöser:
 #  - Push auf main, der eine Datei in firmware/ (oder diesen Workflow) ändert
@@ -6,8 +6,10 @@
 #  - manuell: Actions → Release → "Run workflow"
 #
 # Die Version kommt aus FW_VERSION in PCBuddy/config.h (bzw. aus dem Tag).
-# Angehängt wird firmware/PCBuddy_update_vX.Y.Z.bin, der Text kommt aus CHANGELOG.md.
-# Gibt es das Release schon, passiert nichts.
+# Angehängt werden (falls vorhanden):
+#   firmware/PCBuddy_full_vX.Y.Z.bin     Komplett-Firmware für die Erstinstallation (an 0x0 flashen)
+#   firmware/PCBuddy_update_vX.Y.Z.bin   Update-Datei für das Update per WLAN
+# Der Text kommt aus CHANGELOG.md. Gibt es das Release schon, werden Dateien und Text aktualisiert.
 name: Release
 
 on:
@@ -29,10 +31,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Version, Firmware-Datei und Release-Text bestimmen
+      - name: Version, Dateien und Release-Text bestimmen
         id: prep
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             TAG="$GITHUB_REF_NAME"
@@ -42,40 +42,57 @@ jobs:
           fi
           echo "Version: $TAG"
 
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG gibt es schon – nichts zu tun."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          FILE="firmware/PCBuddy_update_${TAG}.bin"
-          if [ ! -f "$FILE" ]; then
-            echo "::error::$FILE fehlt – bitte zuerst die Update-Datei in firmware/ committen."
+          UPD="firmware/PCBuddy_update_${TAG}.bin"
+          FULL="firmware/PCBuddy_full_${TAG}.bin"
+          if [ ! -f "$UPD" ] && [ ! -f "$FULL" ]; then
+            echo "::error::Keine Firmware für $TAG in firmware/ gefunden."
             exit 1
           fi
+          FILES=""
+          [ -f "$FULL" ] && FILES="$FILES $FULL"
+          [ -f "$UPD" ]  && FILES="$FILES $UPD"
 
           # Abschnitt "## <tag>" aus dem Changelog übernehmen
           awk -v t="## ${TAG}" '$0==t{f=1;next} /^## /{if(f)exit} f' CHANGELOG.md > notes.md
           {
             echo
-            echo "### Installation"
+            echo "### Downloads"
             echo
-            echo "**Update per WLAN:** \`PCBuddy_update_${TAG}.bin\` unten herunterladen → Dashboard \`http://pcbuddy.local\` → **System → Firmware-Update per WLAN** → Datei wählen → *Update installieren*."
+            echo "| Datei | Wofür |"
+            echo "|---|---|"
+            [ -f "$FULL" ] && echo "| \`PCBuddy_full_${TAG}.bin\` | **Komplette Firmware** für die Erstinstallation per USB, an Adresse **0x0** flashen. Setzt die Einstellungen zurück, danach startet das WLAN-Setup. |"
+            [ -f "$UPD" ]  && echo "| \`PCBuddy_update_${TAG}.bin\` | **Update per WLAN** für ein bereits eingerichtetes Gerät. Die Einstellungen bleiben erhalten. |"
+            echo "| *Source code* | Arduino-Sketch \`PCBuddy/PCBuddy.ino\` zum selbst Kompilieren |"
             echo
-            echo "**Erstinstallation per USB:** *Source code (zip)* herunterladen und \`PCBuddy/PCBuddy.ino\` in der Arduino IDE öffnen. Board **ESP32C3 Dev Module**, Partition Scheme **Minimal SPIFFS (1.9MB APP with OTA/128KB SPIFFS)**, USB CDC On Boot **Enabled**. Details im [README](https://github.com/${GITHUB_REPOSITORY}#installation)."
+            echo "### Erstinstallation (ohne Arduino IDE)"
+            echo
+            echo "1. [ESP Web Tool](https://espressif.github.io/esptool-js/) in Chrome oder Edge öffnen und den ESP32-C3 per USB-C anschließen"
+            echo "2. *Connect* → Port wählen. Klappt es nicht: **BOOT** gedrückt halten, kurz **RESET**, BOOT loslassen."
+            echo "3. *Erase Flash*, dann Flash Address **0x0** und \`PCBuddy_full_${TAG}.bin\` wählen → *Program*"
+            echo "4. Nach dem Neustart mit dem WLAN **PCBuddy-Setup** verbinden und einrichten"
+            echo
+            echo "Oder per Kommandozeile: \`esptool.py --chip esp32c3 write_flash 0x0 PCBuddy_full_${TAG}.bin\`"
+            echo
+            echo "### Update per WLAN"
+            echo
+            echo "Dashboard \`http://pcbuddy.local\` → **System → Firmware-Update per WLAN** → \`PCBuddy_update_${TAG}.bin\` wählen → *Update installieren*."
+            echo
+            echo "Mehr im [README](https://github.com/${GITHUB_REPOSITORY}#installation)."
           } >> notes.md
 
-          echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "file=$FILE" >> "$GITHUB_OUTPUT"
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
 
-      - name: Release erstellen
-        if: steps.prep.outputs.skip != 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.prep.outputs.tag }}
-          target_commitish: ${{ github.sha }}
-          name: PCBuddy ${{ steps.prep.outputs.tag }}
-          body_path: notes.md
-          files: ${{ steps.prep.outputs.file }}
-          make_latest: true
+      - name: Release erstellen oder aktualisieren
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.prep.outputs.tag }}
+          FILES: ${{ steps.prep.outputs.files }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG existiert – Dateien und Text werden aktualisiert."
+            gh release upload "$TAG" $FILES --clobber
+            gh release edit "$TAG" --title "PCBuddy $TAG" --notes-file notes.md --latest
+          else
+            gh release create "$TAG" $FILES --target "$GITHUB_SHA" --title "PCBuddy $TAG" --notes-file notes.md --latest
+          fi

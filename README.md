@@ -127,7 +127,20 @@ Alle Pins und Zeiten lassen sich in [`PCBuddy/config.h`](PCBuddy/config.h) ände
 
 ## Installation
 
-### Arduino IDE (2.x)
+Es gibt zwei Wege: die **fertige Komplett-Firmware** flashen (ohne Arduino IDE, am schnellsten) oder den Sketch
+**selbst kompilieren**.
+
+### Variante A: Fertige Firmware flashen (ohne Arduino IDE)
+
+1. Aus dem [**neuesten Release**](../../releases/latest) die Datei **`PCBuddy_full_vX.Y.Z.bin`** herunterladen
+2. Das [**ESP Web Tool**](https://espressif.github.io/esptool-js/) in Chrome oder Edge öffnen und den ESP32-C3 per USB-C anschließen
+3. **Connect** → Port wählen → **Erase Flash** → bei *Flash Address* **`0x0`** eintragen, Datei wählen → **Program**
+4. Fertig: Nach dem Neustart erscheint das WLAN **`PCBuddy-Setup`** (siehe [Ersteinrichtung](#ersteinrichtung))
+
+Die Komplett-Datei enthält Bootloader, das richtige Partitionsschema und das Programm. Danach gehen alle Updates per WLAN.
+Per Kommandozeile geht das mit `esptool.py --chip esp32c3 write_flash 0x0 PCBuddy_full_vX.Y.Z.bin`.
+
+### Variante B: Selbst kompilieren mit der Arduino IDE (2.x)
 
 1. **Boardverwalter:** „esp32“ von Espressif, Version **3.x** installieren
 2. **Bibliotheksverwalter:** **U8g2** (von oliver) installieren
