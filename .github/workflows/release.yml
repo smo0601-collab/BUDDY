@@ -1,0 +1,46 @@
+# Erstellt automatisch ein GitHub-Release, sobald ein Versions-Tag (z. B. v1.6.4) gepusht wird.
+# Angehängt wird firmware/PCBuddy_update_<tag>.bin, der Text kommt aus CHANGELOG.md.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Firmware-Datei und Release-Text vorbereiten
+        id: prep
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          FILE="firmware/PCBuddy_update_${TAG}.bin"
+          if [ ! -f "$FILE" ]; then
+            echo "::error::$FILE fehlt – bitte zuerst die Update-Datei in firmware/ committen."
+            exit 1
+          fi
+          # Abschnitt "## <tag>" aus dem Changelog übernehmen
+          awk -v t="## ${TAG}" '$0==t{f=1;next} /^## /{if(f)exit} f' CHANGELOG.md > notes.md
+          {
+            echo
+            echo "### Installation"
+            echo
+            echo "**Update per WLAN:** \`PCBuddy_update_${TAG}.bin\` herunterladen → Dashboard \`http://pcbuddy.local\` → **System → Firmware-Update per WLAN** → Datei wählen → *Update installieren*."
+            echo
+            echo "**Erstinstallation per USB:** Quellcode herunterladen und \`PCBuddy/PCBuddy.ino\` in der Arduino IDE öffnen. Board **ESP32C3 Dev Module**, Partition Scheme **Minimal SPIFFS (1.9MB APP with OTA/128KB SPIFFS)**, USB CDC On Boot **Enabled**. Details im [README](https://github.com/${GITHUB_REPOSITORY}#installation)."
+          } >> notes.md
+          echo "file=$FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Release erstellen
+        uses: softprops/action-gh-release@v2
+        with:
+          name: PCBuddy ${{ github.ref_name }}
+          body_path: notes.md
+          files: ${{ steps.prep.outputs.file }}
+          make_latest: true
