@@ -1,6 +1,6 @@
 # Fertige Firmware
 
-Am einfachsten lädst du die Dateien aus dem [**neuesten Release**](../../../releases/latest). Hier liegen dieselben Dateien.
+Am einfachsten lädst du die Dateien aus dem [**neuesten Release**](https://github.com/smo0601-collab/BUDDY/releases/latest). Hier liegen dieselben Dateien.
 
 | Datei | Wofür | Einstellungen |
 |---|---|---|
