@@ -1,11 +1,24 @@
-# Erstellt automatisch ein GitHub-Release, sobald ein Versions-Tag (z. B. v1.6.4) gepusht wird.
-# Angehängt wird firmware/PCBuddy_update_<tag>.bin, der Text kommt aus CHANGELOG.md.
+# Erstellt automatisch ein GitHub-Release für die aktuelle Firmware-Version.
+#
+# Auslöser:
+#  - Push auf main, der eine Datei in firmware/ (oder diesen Workflow) ändert
+#  - Push eines Versions-Tags vX.Y.Z
+#  - manuell: Actions → Release → "Run workflow"
+#
+# Die Version kommt aus FW_VERSION in PCBuddy/config.h (bzw. aus dem Tag).
+# Angehängt wird firmware/PCBuddy_update_vX.Y.Z.bin, der Text kommt aus CHANGELOG.md.
+# Gibt es das Release schon, passiert nichts.
 name: Release
 
 on:
   push:
+    branches: [main]
+    paths:
+      - 'firmware/**'
+      - '.github/workflows/release.yml'
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -16,31 +29,53 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Firmware-Datei und Release-Text vorbereiten
+      - name: Version, Firmware-Datei und Release-Text bestimmen
         id: prep
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${GITHUB_REF_NAME}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG="$GITHUB_REF_NAME"
+          else
+            VER=$(sed -n 's/^#define FW_VERSION[[:space:]]*"\(.*\)".*/\1/p' PCBuddy/config.h)
+            TAG="v${VER}"
+          fi
+          echo "Version: $TAG"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG gibt es schon – nichts zu tun."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           FILE="firmware/PCBuddy_update_${TAG}.bin"
           if [ ! -f "$FILE" ]; then
             echo "::error::$FILE fehlt – bitte zuerst die Update-Datei in firmware/ committen."
             exit 1
           fi
+
           # Abschnitt "## <tag>" aus dem Changelog übernehmen
           awk -v t="## ${TAG}" '$0==t{f=1;next} /^## /{if(f)exit} f' CHANGELOG.md > notes.md
           {
             echo
             echo "### Installation"
             echo
-            echo "**Update per WLAN:** \`PCBuddy_update_${TAG}.bin\` herunterladen → Dashboard \`http://pcbuddy.local\` → **System → Firmware-Update per WLAN** → Datei wählen → *Update installieren*."
+            echo "**Update per WLAN:** \`PCBuddy_update_${TAG}.bin\` unten herunterladen → Dashboard \`http://pcbuddy.local\` → **System → Firmware-Update per WLAN** → Datei wählen → *Update installieren*."
             echo
-            echo "**Erstinstallation per USB:** Quellcode herunterladen und \`PCBuddy/PCBuddy.ino\` in der Arduino IDE öffnen. Board **ESP32C3 Dev Module**, Partition Scheme **Minimal SPIFFS (1.9MB APP with OTA/128KB SPIFFS)**, USB CDC On Boot **Enabled**. Details im [README](https://github.com/${GITHUB_REPOSITORY}#installation)."
+            echo "**Erstinstallation per USB:** *Source code (zip)* herunterladen und \`PCBuddy/PCBuddy.ino\` in der Arduino IDE öffnen. Board **ESP32C3 Dev Module**, Partition Scheme **Minimal SPIFFS (1.9MB APP with OTA/128KB SPIFFS)**, USB CDC On Boot **Enabled**. Details im [README](https://github.com/${GITHUB_REPOSITORY}#installation)."
           } >> notes.md
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "file=$FILE" >> "$GITHUB_OUTPUT"
 
       - name: Release erstellen
+        if: steps.prep.outputs.skip != 'true'
         uses: softprops/action-gh-release@v2
         with:
-          name: PCBuddy ${{ github.ref_name }}
+          tag_name: ${{ steps.prep.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: PCBuddy ${{ steps.prep.outputs.tag }}
           body_path: notes.md
           files: ${{ steps.prep.outputs.file }}
           make_latest: true
