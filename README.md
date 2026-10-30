@@ -150,7 +150,7 @@ Alle Pins und Zeiten lassen sich in [`PCBuddy/config.h`](PCBuddy/config.h) ände
 ### Schon installiert? → Update per WLAN
 
 Läuft PCBuddy bereits mit dem richtigen Partitionsschema, lade einfach die Datei `PCBuddy_update_vX.Y.Z.bin` aus den
-[**Releases**](../../releases) im Dashboard hoch (siehe [Firmware-Update per WLAN](#firmware-update-per-wlan)).
+Ordner [**firmware/**](firmware/) im Dashboard hoch (siehe [Firmware-Update per WLAN](#firmware-update-per-wlan)).
 
 ---
 
@@ -231,7 +231,7 @@ Adresse, z. B. `http://pcbuddy.local/#text`.
 
 <img src="docs/img/dashboard-system.png" alt="Dashboard – System mit Firmware-Update" width="760">
 
-1. Die neueste **`PCBuddy_update_vX.Y.Z.bin`** aus den [**Releases**](../../releases) herunterladen
+1. Die neueste **`PCBuddy_update_vX.Y.Z.bin`** aus den Ordner [**firmware/**](firmware/) herunterladen
 2. Dashboard → **System → Firmware-Update per WLAN** → Datei wählen → *Update installieren*
 3. Das Display zeigt einen Fortschrittsbalken. PCBuddy startet neu, alle Einstellungen bleiben erhalten.
 
@@ -295,6 +295,7 @@ BUDDY/
 ├── docs/
 │   ├── API.md               alle HTTP- und Seriell-Befehle
 │   └── img/                 Bilder, Animationen, Schaltplan
+├── firmware/                fertige Update-Datei (.bin) für das Update per WLAN
 ├── CHANGELOG.md             Versionsgeschichte
 └── LICENSE
 ```
