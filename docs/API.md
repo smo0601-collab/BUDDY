@@ -40,6 +40,29 @@ Diese Kurzformen gehen auch: `happy`/`smile` → cute · `kiss` → kissou · `h
 
 `/api/marquee` ist ein Alias für `/api/text` und bleibt aus Kompatibilitätsgründen erhalten.
 
+## Wecker & Termine
+
+| Endpunkt | Parameter | Wirkung |
+|---|---|---|
+| `/api/alarms` | – | alle Wecker und Termine mit nächstem Termin (`next`), Melodienliste, Klingel-Zustand |
+| `/api/alarm/set` | `i` (fehlt oder `-1` = neu), `time=HH:MM`, `days`, `label`, `emo`, `snd`, `vibe`, `snooze`, `en` | Wecker anlegen oder ändern (nur mitgeschickte Felder) |
+| `/api/alarm/del` | `i` | Wecker löschen |
+| `/api/event/set` | `i`, `date=JJJJ-MM-TT` (oder `TT.MM.JJJJ`), `time`, `rep`, `lead`, `label`, `emo`, `snd`, `vibe`, `en` | Termin anlegen oder ändern |
+| `/api/event/del` | `i` | Termin löschen |
+| `/api/alarm/stop` · `/api/alarm/snooze` | – | klingelnden Wecker/Termin ausschalten bzw. schlummern |
+| `/api/alarm/test` · `/api/event/test` | `i` | Wecker/Termin sofort zum Test auslösen |
+| `/api/sound` | `id=0…10` oder `stop=1` | Melodie probehören |
+
+- **`days`**: Bitmaske der Wochentage, Mo = 1, Di = 2, Mi = 4, Do = 8, Fr = 16, Sa = 32, So = 64
+  (Mo–Fr = `31`, Wochenende = `96`, täglich = `127`). `0` = einmalig: klingelt beim nächsten Mal und schaltet sich danach aus.
+- **`rep`**: `0` einmalig, `1` täglich, `2` wöchentlich, `3` monatlich, `4` jährlich. Bei Wiederholungen gilt das Datum als Start
+  (bei Geburtstagen darf es das Geburtsjahr sein).
+- **`lead`**: so viele Minuten vorher erinnern (0–240).
+- **`emo`**: Name der Emotion (siehe oben) oder ihre Nummer. **`snooze`**: Minuten (0 = kein Schlummern).
+- **`snd`**: `0` Aus, `1` Piep, `2` Doppelpiep, `3` Klassischer Wecker, `4` Gong, `5` Fanfare, `6` Fröhlich, `7` Sanft,
+  `8` Happy Birthday, `9` Für Elise, `10` Arcade.
+- Maximal 8 Wecker und 20 Termine. Name: Wecker bis 23, Termine bis 33 Byte (Umlaute zählen doppelt).
+
 ## Status & Einstellungen
 
 | Endpunkt | Methode | Wirkung |
@@ -53,7 +76,7 @@ Diese Kurzformen gehen auch: `happy`/`smile` → cute · `kiss` → kissou · `h
 
 **`/api/status` liefert:** `name`, `fw`, `host`, `ip`, `ssid`, `rssi`, `mode`, `emotion`, `portal`, `quiet`,
 `quiet_mode`, `cycle`, `bright`, `oled`, `uptime`, `heap`, `ota`, `part`, `upd_pw`, `wifi_reconnects`, `wifi_reason`,
-`city`, `time`, `wx` (`temp`, `code`, `hum`, `wind`, `text`)
+`city`, `ringing` (`alarm`, `event` oder leer), `next_alarm` (z. B. `morgen 07:30`), `time`, `wx` (`temp`, `code`, `hum`, `wind`, `text`)
 
 **Felder für `/api/settings`:**
 
@@ -66,7 +89,8 @@ Diese Kurzformen gehen auch: `happy`/`smile` → cute · `kiss` → kissou · `h
 | `quiet_on`, `quiet_from`, `quiet_to` | Ruhemodus-Zeitplan (`HH:MM`) |
 | `quiet_bright`, `quiet_disp`, `quiet_mute`, `quiet_novibe` | Ruhemodus: Helligkeit, Anzeige (0 Gesicht, 1 Schlaf, 2 Uhr, 3 aus), Ton aus, Vibration aus |
 | `city`, `lat`, `lon`, `tz` | Ort fürs Wetter, Zeitzone (POSIX-String) |
-| `sl_weather`, `sl_clock`, `sl_wifi`, `sl_ip`, `sl_fw`, `lock_info` | Info-Folien, Doppeltipp sperren |
+| `sl_weather`, `sl_clock`, `sl_events`, `sl_wifi`, `sl_ip`, `sl_fw`, `lock_info` | Info-Folien, Doppeltipp sperren |
+| `alarm_max`, `ev_quiet` | Wecker klingelt höchstens so viele Minuten (1–60) · Termine im Ruhemodus mit Ton |
 | `sound`, `vibe`, `pac_sound` | Ton, Vibration, Waka-Waka zur vollen Stunde |
 | `shake_on`, `shake_sens` | Neigungssensor an/aus, Empfindlichkeit 1–5 |
 | `cycle_mode`, `cycle_order`, `cycle_sec`, `emo_mask` | Auto-Wechsel (0 aus, 1 Durchlauf, 2 Leerlauf), Reihenfolge, Sekunden, Bitmaske der Emotionen |
@@ -90,6 +114,8 @@ emotion <name> [ms]     text <t>        loop <t>        show <t>        speed <1
 notify <t>              beep [f]        vibe [ms]       dim <1-100>     quiet on|off|auto|toggle
 clock [demo]            cycle on|idle|off               tap   double   long   shake   rock
 info   sleep   wake   portal   restart   status   help
+alarm                   (Liste)         alarm stop      alarm snooze    alarm test <i>
+sound <0-10>            Melodie probehören
 ```
 
 ## Beispiele
@@ -100,6 +126,14 @@ make && curl -s "http://pcbuddy.local/api/notify?text=Build%20fertig"
 
 # Ruhemodus jeden Abend per Cron
 0 22 * * *  curl -s "http://pcbuddy.local/api/quiet?state=on"
+```
+
+```bash
+# Wecker Mo–Fr um 6:45 mit sanfter Melodie und fröhlichem Gesicht anlegen
+curl -s "http://pcbuddy.local/api/alarm/set?time=06:45&days=31&label=Aufstehen&snd=7&emo=cute"
+
+# Geburtstag jedes Jahr am 14. März um 9 Uhr mit Happy Birthday und pochendem Herz
+curl -s "http://pcbuddy.local/api/event/set?date=1956-03-14&time=09:00&rep=4&label=Geburtstag%20Oma&snd=8&emo=heartbeat"
 ```
 
 ```powershell

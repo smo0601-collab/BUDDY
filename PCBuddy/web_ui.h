@@ -23,8 +23,9 @@ h2{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut)
 h3{font-size:13px;margin:16px 0 8px;color:var(--text);font-weight:600}
 label{display:block;font-size:12px;color:var(--mut);margin:10px 0 5px}
 input,select,button{font:inherit;color:var(--text)}
-input[type=text],input[type=password],input[type=number],input[type=time],select{width:100%;padding:9px 11px;background:var(--bg);border:1px solid var(--line);border-radius:10px;outline:none}
+input[type=text],input[type=password],input[type=number],input[type=time],input[type=date],select{width:100%;padding:9px 11px;background:var(--bg);border:1px solid var(--line);border-radius:10px;outline:none}
 input:focus,select:focus{border-color:var(--acc)}
+input[type=time],input[type=date]{color-scheme:dark;font:inherit;color:inherit;min-height:40px}
 input[type=range]{width:100%;accent-color:var(--acc)}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:9px 14px;border-radius:10px;border:1px solid var(--line);background:var(--card2);cursor:pointer;font-weight:600;font-size:13px;white-space:nowrap}
 .btn:hover{border-color:#3a4352}.btn:active{transform:translateY(1px)}
@@ -113,6 +114,19 @@ scan();
 .ck input{accent-color:var(--acc);margin:0}
 .bar{height:10px;border-radius:6px;background:var(--bg);border:1px solid var(--line);overflow:hidden;margin-top:10px}.bar i{display:block;height:100%;width:0;background:var(--acc);transition:width .2s}
 .warn{border:1px solid var(--warn);color:#f0b4b0;border-radius:10px;padding:10px;font-size:12.5px;margin-top:8px}
+.pl{display:flex;align-items:center;gap:12px;padding:11px 0;border-top:1px solid var(--line)}.pl:first-child{border-top:0}
+.pl .tm{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;min-width:66px;line-height:1.1}.pl .tm small{display:block;font-size:11.5px;font-weight:500;color:var(--mut)}
+.pl .tx{flex:1;min-width:0;cursor:pointer}.pl .tx b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+.pl .tx small{display:block;color:var(--mut);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pl.off .tm,.pl.off .tx{opacity:.45}
+.tg.sw{border:0;padding:0}.empty{color:var(--mut);font-size:13px;padding:10px 0}
+.days{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}.days .btn{padding:9px 0}
+.quick{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}.quick .chip{margin:0}
+.modal{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.6);display:none;align-items:flex-start;justify-content:center;padding:28px 12px;overflow-y:auto}
+.modal.open{display:flex}.modal .card{width:min(520px,100%);box-shadow:0 12px 40px rgba(0,0,0,.5)}
+.dlgh{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}.dlgh h2{margin:0}.dlgh .x{padding:6px 10px}
+.sndrow{display:flex;gap:6px}.sndrow select{flex:1}.sndrow .btn{padding:9px 12px}
+#ringBar{display:none;margin-bottom:14px;border-color:var(--acc);align-items:center;gap:12px;flex-wrap:wrap}#ringBar.open{display:flex}
+#ringBar b{flex:1;font-size:15px;min-width:160px}
 input[type=file]{width:100%;padding:8px;background:var(--bg);border:1px dashed var(--line);border-radius:10px;color:var(--mut)}.ck i{font-style:normal}.ck.off{opacity:.45}
 )CSS"
 
@@ -121,17 +135,18 @@ const char DASH_HTML[] PROGMEM = R"HTML(<!doctype html><html lang="de"><head><me
 <style>)HTML" PCB_CSS DASH_CSS R"HTML(</style></head><body>
 <header><div class="logo"><i></i><i></i></div><div style="flex:1;min-width:0"><h1 id="title">PCBuddy</h1><div class="sub"><span class="dot" id="dot"></span><span id="subline">verbinde…</span></div></div></header>
 <nav class="tabs"><div id="tabs">
-<button class="tab" data-t="start">Start</button><button class="tab" data-t="face">Gesicht</button><button class="tab" data-t="text">Text</button>
+<button class="tab" data-t="start">Start</button><button class="tab" data-t="face">Gesicht</button><button class="tab" data-t="text">Text</button><button class="tab" data-t="plan">Wecker &amp; Termine</button>
 <button class="tab" data-t="disp">Anzeige</button><button class="tab" data-t="quiet">Ruhemodus</button><button class="tab" data-t="place">Ort &amp; Zeit</button>
 <button class="tab" data-t="wifi">WLAN</button><button class="tab" data-t="sys">System</button></div></nav>
 <div class="wrap">
+<div class="card" id="ringBar"><b id="ringTxt">⏰ Wecker klingelt</b><button class="btn" id="ringSn" onclick="ringAct('snooze')">Schlummern</button><button class="btn pri" onclick="ringAct('stop')">Ausschalten</button></div>
 
 <!-- ============ START ============ -->
 <section class="panel" data-p="start">
 <div class="card"><h2>Status</h2><div class="kv">
 <b>Modus</b><span id="s_mode">–</span><b>Emotion</b><span id="s_emo">–</span><b>Uhrzeit</b><span id="s_time">–</span>
 <b>Wetter</b><span id="s_wx">–</span><b>Ruhemodus</b><span id="s_quiet">–</span><b>Helligkeit</b><span id="s_br">–</span>
-<b>Auto-Wechsel</b><span id="s_cy">–</span><b>WLAN</b><span id="s_wifi">–</span><b>Laufzeit</b><span id="s_up">–</span></div></div>
+<b>Nächster Wecker</b><span id="s_al">–</span><b>Auto-Wechsel</b><span id="s_cy">–</span><b>WLAN</b><span id="s_wifi">–</span><b>Laufzeit</b><span id="s_up">–</span></div></div>
 <div class="card"><h2>Helligkeit</h2>
 <label>Jetzt <b id="lbV" style="color:var(--text)"></b></label>
 <input type="range" id="liveBr" min="1" max="100" oninput="dimLive(this.value)" onchange="dimLive(this.value,1)">
@@ -181,6 +196,46 @@ const char DASH_HTML[] PROGMEM = R"HTML(<!doctype html><html lang="de"><head><me
 <p class="hint">Lange stehende Texte werden automatisch umgebrochen und kleiner geschrieben; passt es gar nicht, läuft er als Lauftext. Die Geschwindigkeit wird gespeichert und wirkt sofort.</p></div>
 </section>
 
+<!-- ============ WECKER & TERMINE ============ -->
+<section class="panel" data-p="plan" style="grid-template-columns:repeat(auto-fit,minmax(340px,1fr))">
+<div class="card wide warn" id="plTime" style="display:none;margin:0">Die Uhrzeit ist noch nicht synchronisiert (kein Internet?). Wecker und Termine klingeln erst, wenn PCBuddy die Uhrzeit kennt.</div>
+<div class="card"><h2>Wecker</h2><div id="alList"></div>
+<div class="flex" style="margin-top:10px"><button class="btn pri" id="alAdd" onclick="alEdit(-1)">+ Wecker</button><span class="hint" id="alCnt"></span></div>
+<p class="hint">Klingelt auch im Ruhemodus, das Display wird dafür hell. Am Gerät: <b>tippen</b> oder <b>schütteln</b> = schlummern, <b>2× tippen</b> oder <b>lang drücken</b> = aus.</p></div>
+<div class="card"><h2>Termine</h2><div id="evList"></div>
+<div class="flex" style="margin-top:10px"><button class="btn pri" id="evAdd" onclick="evEdit(-1)">+ Termin</button><span class="hint" id="evCnt"></span></div>
+<p class="hint">Zur Erinnerung zeigt PCBuddy dein Gesicht und den Termin und spielt die Melodie 3×. Tippen = gesehen.</p></div>
+<div class="card wide"><h2>Einstellungen</h2><div class="row"><div>
+<label style="margin-top:0">Wecker klingelt höchstens</label><select id="alMax" onchange="plSet('alarm_max',this.value)"><option value="1">1 Minute</option><option value="3">3 Minuten</option><option value="5">5 Minuten</option><option value="10">10 Minuten</option><option value="15">15 Minuten</option><option value="20">20 Minuten</option><option value="30">30 Minuten</option><option value="60">60 Minuten</option></select></div><div>
+<label class="tg" style="margin-top:14px"><span>Termine im Ruhemodus mit Ton<small>Sonst nur Anzeige (Wecker klingeln immer)</small></span><input type="checkbox" id="evQuiet" onchange="plSet('ev_quiet',this.checked?1:0)"></label></div></div>
+<p class="hint">Die nächsten Einträge stehen auch auf der Info-Folie „Wecker &amp; Termine“ (Doppeltipp). Ein- und ausschalten unter <a href="#disp" style="color:var(--acc)">Anzeige</a>.</p></div>
+</section>
+
+<div class="modal" id="alDlg" onclick="if(event.target===this)dlgClose()"><div class="card">
+<div class="dlgh"><h2 id="alTitle">Wecker</h2><button class="btn x" type="button" title="Schließen" onclick="dlgClose()">✕</button></div>
+<div class="row"><div><label>Uhrzeit</label><input type="time" id="a_time" required></div><div><label>Name</label><input type="text" id="a_label" maxlength="22" placeholder="Aufstehen"></div></div>
+<label>Wochentage</label><div class="days" id="a_days"></div>
+<div class="quick"><span class="chip" onclick="setDays(31)">Mo–Fr</span><span class="chip" onclick="setDays(96)">Wochenende</span><span class="chip" onclick="setDays(127)">Täglich</span><span class="chip" onclick="setDays(0)">Einmalig</span></div>
+<p class="hint" id="a_dayHint"></p>
+<div class="row"><div><label>Gesicht</label><select id="a_emo"></select></div><div><label>Schlummern</label><select id="a_snooze"><option value="0">aus</option><option value="5">5 Minuten</option><option value="10">10 Minuten</option><option value="15">15 Minuten</option></select></div></div>
+<label>Ton</label><div class="sndrow"><select id="a_snd"></select><button class="btn" type="button" title="Probehören" onclick="sndPlay('a_snd')">▶</button><button class="btn" type="button" title="Stopp" onclick="sndStop()">■</button></div>
+<label class="tg" style="margin-top:8px"><span>Vibration</span><input type="checkbox" id="a_vibe"></label>
+<label class="tg"><span>Aktiv</span><input type="checkbox" id="a_en"></label>
+<div class="flex" style="margin-top:14px"><button class="btn bad" id="a_del" onclick="alDel()">Löschen</button><button class="btn" id="a_test" onclick="plTest('alarm')">Testen</button><span style="flex:1"></span><button class="btn pri" onclick="alSave()">Speichern</button></div>
+</div></div>
+
+<div class="modal" id="evDlg" onclick="if(event.target===this)dlgClose()"><div class="card">
+<div class="dlgh"><h2 id="evTitle">Termin</h2><button class="btn x" type="button" title="Schließen" onclick="dlgClose()">✕</button></div>
+<label>Was?</label><input type="text" id="e_label" maxlength="32" placeholder="Zahnarzt">
+<div class="row"><div><label>Datum</label><input type="date" id="e_date" required></div><div><label>Uhrzeit</label><input type="time" id="e_time" required></div></div>
+<div class="row"><div><label>Wiederholen</label><select id="e_rep"><option value="0">nicht (einmalig)</option><option value="1">täglich</option><option value="2">wöchentlich</option><option value="3">monatlich</option><option value="4">jährlich (z. B. Geburtstag)</option></select></div>
+<div><label>Erinnern</label><select id="e_lead"><option value="0">zur Uhrzeit</option><option value="5">5 min vorher</option><option value="10">10 min vorher</option><option value="15">15 min vorher</option><option value="30">30 min vorher</option><option value="60">1 Stunde vorher</option><option value="120">2 Stunden vorher</option><option value="240">4 Stunden vorher</option></select></div></div>
+<div class="row"><div><label>Gesicht</label><select id="e_emo"></select></div><div><label>Ton</label><div class="sndrow"><select id="e_snd"></select><button class="btn" type="button" title="Probehören" onclick="sndPlay('e_snd')">▶</button></div></div></div>
+<label class="tg" style="margin-top:8px"><span>Vibration</span><input type="checkbox" id="e_vibe"></label>
+<label class="tg"><span>Aktiv</span><input type="checkbox" id="e_en"></label>
+<div class="flex" style="margin-top:14px"><button class="btn bad" id="e_del" onclick="evDel()">Löschen</button><button class="btn" id="e_test" onclick="plTest('event')">Testen</button><span style="flex:1"></span><button class="btn pri" onclick="evSave()">Speichern</button></div>
+</div></div>
+
 <form id="cfg" autocomplete="off">
 <!-- ============ ANZEIGE ============ -->
 <section class="panel" data-p="disp">
@@ -192,6 +247,7 @@ const char DASH_HTML[] PROGMEM = R"HTML(<!doctype html><html lang="de"><head><me
 <div class="card"><h2>Info-Folien (Doppeltipp)</h2>
 <label class="tg"><span>Wetter</span><input type="checkbox" name="sl_weather"></label>
 <label class="tg"><span>Pac-Man-Uhr</span><input type="checkbox" name="sl_clock"></label>
+<label class="tg"><span>Wecker &amp; Termine</span><input type="checkbox" name="sl_events"></label>
 <label class="tg"><span>WLAN</span><input type="checkbox" name="sl_wifi"></label>
 <label class="tg"><span>IP-Adresse</span><input type="checkbox" name="sl_ip"></label>
 <label class="tg"><span>Firmware</span><input type="checkbox" name="sl_fw"></label>
@@ -286,7 +342,7 @@ const EMO=[['neutral','😐','Neutral'],['cute','😊','Fröhlich'],['laugh','�
 ['confused','🤔','Verwirrt'],['uh','🥴','Uh (wackelig)'],['dizzy','😵','Schwindelig'],['serious','😑','Ernst'],['angry','😠','Wütend'],['fire','🔥','Feuer'],
 ['sad','🙁','Traurig'],['crying','😢','Weinen'],['sleepy','😴','Müde'],['left','👈','Blick links'],['right','👉','Blick rechts']];
 const TZ=[['CET-1CEST,M3.5.0,M10.5.0/3','Deutschland / Österreich / Schweiz (MEZ)'],['GMT0BST,M3.5.0/1,M10.5.0','Großbritannien (GMT/BST)'],['WET0WEST,M3.5.0/1,M10.5.0','Portugal (WEZ)'],['EET-2EEST,M3.5.0/3,M10.5.0/4','Osteuropa (OEZ)'],['MSK-3','Moskau (UTC+3)'],['<+03>-3','Türkei (UTC+3)'],['GST-4','VAE / Golf (UTC+4)'],['IST-5:30','Indien (UTC+5:30)'],['ICT-7','Thailand / Vietnam (UTC+7)'],['CST-8','China (UTC+8)'],['JST-9','Japan (UTC+9)'],['AEST-10AEDT,M10.1.0,M4.1.0/3','Australien Ost'],['NZST-12NZDT,M9.5.0,M4.1.0/3','Neuseeland'],['EST5EDT,M3.2.0,M11.1.0','USA Ost'],['CST6CDT,M3.2.0,M11.1.0','USA Zentral'],['MST7MDT,M3.2.0,M11.1.0','USA Mountain'],['PST8PDT,M3.2.0,M11.1.0','USA Pazifik'],['<-03>3','Brasilien / Argentinien (UTC-3)'],['UTC0','UTC'],['custom','Eigene (POSIX-String)…']];
-let dirty=false,isQuiet=false;
+let dirty=false,isQuiet=false,lastRing='';
 function toast(t,e){const x=$('#toast');x.textContent=t;x.className='show'+(e?' err':'');clearTimeout(x._t);x._t=setTimeout(()=>x.className='',2000)}
 async function act(u,quiet){try{const r=await fetch(u,{method:'POST',cache:'no-store'});if(!quiet)toast(r.ok?'OK':'Fehler '+r.status,!r.ok);setTimeout(poll,300);return r}catch(e){toast('Keine Verbindung',1)}}
 function emo(k){act('/api/emotion?name='+k+'&ms='+$('#emoMs').value)}
@@ -307,10 +363,67 @@ async function cySave(){if(!cyMask&&$('#cyMode').value!=='0'){toast('Bitte minde
  try{const j=await (await fetch('/api/settings',{method:'POST',body:p})).json();toast(j.ok?('Auto-Wechsel: '+CY_NAMES[$('#cyMode').value]):'Fehler',!j.ok);poll()}catch(e){toast('Fehler',1)}}
 async function cyToggle(){const r=await act('/api/cycle?mode='+(cyCur?'off':'run'),1);if(r&&r.ok){const j=await r.json();toast(j.cycle?'Durchlauf läuft':'Durchlauf aus');$('#cyMode').value=j.cycle;cyLabel()}}
 
+// ---- Wecker & Termine ----
+const DAYS=['Mo','Di','Mi','Do','Fr','Sa','So'],REP=['einmalig','täglich','wöchentlich','monatlich','jährlich'];
+let PL={alarms:[],events:[],sounds:[]},edI=-1,edDays=0;
+const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const emoName=k=>{const e=EMO.find(x=>x[0]===k);return e?e[1]+' '+e[2]:k};
+function daysText(d){if(!d)return'einmalig';if(d===127)return'täglich';if(d===31)return'Mo–Fr';if(d===96)return'Sa + So';return DAYS.filter((x,i)=>d>>i&1).join(', ')}
+function leadText(v){const o=$('#e_lead').querySelector('[value="'+v+'"]');return o?o.textContent:v+' min vorher'}
+function fmtDate(s){const p=s.split('-');return p[2]+'.'+p[1]+'.'+p[0]}
+function plRow(on,tm,sub,title,info,click,tog){const r=document.createElement('div');r.className='pl'+(on?'':' off');
+ r.innerHTML='<div class="tm">'+tm+(sub?'<small>'+sub+'</small>':'')+'</div><div class="tx"><b>'+esc(title)+'</b>'+info.map(x=>'<small>'+x+'</small>').join('')+'</div><label class="tg sw"><input type="checkbox"'+(on?' checked':'')+'></label>';
+ r.querySelector('.tx').onclick=click;r.querySelector('input').onchange=e=>tog(e.target.checked);return r}
+function plRender(){const al=$('#alList'),ev=$('#evList');al.innerHTML='';ev.innerHTML='';
+ PL.alarms.forEach(a=>{const sn=PL.snooze&&PL.snooze_idx===a.i;
+  al.appendChild(plRow(a.en,a.time,'',a.label||'Wecker',[esc(daysText(a.days))+' · '+esc(PL.sounds[a.snd]),sn?'⏸ schlummert bis '+PL.snooze:(a.en?(a.next?'nächster: '+esc(a.next):''):'aus')],
+   ()=>alEdit(a.i),v=>plQuick('alarm',a.i,v)))});
+ PL.events.forEach(e=>{const past=e.en&&!e.next;
+  ev.appendChild(plRow(e.en&&!past,e.time,fmtDate(e.date).slice(0,6),e.label||'Termin',[REP[e.rep]+(e.lead?' · '+leadText(e.lead):''),e.en?(past?'vorbei':'nächster: '+esc(e.next)):'aus'],
+   ()=>evEdit(e.i),v=>plQuick('event',e.i,v)))});
+ if(!PL.alarms.length)al.innerHTML='<div class="empty">Noch kein Wecker.</div>';
+ if(!PL.events.length)ev.innerHTML='<div class="empty">Noch keine Termine.</div>';
+ $('#alCnt').textContent=PL.alarms.length+' / '+PL.max_alarms;$('#evCnt').textContent=PL.events.length+' / '+PL.max_events;
+ $('#alAdd').disabled=PL.alarms.length>=PL.max_alarms;$('#evAdd').disabled=PL.events.length>=PL.max_events;
+ $('#plTime').style.display=PL.time_ok?'none':''}
+async function plLoad(){try{PL=await (await fetch('/api/alarms',{cache:'no-store'})).json();
+ for(const id of ['a_snd','e_snd']){const s=$('#'+id),v=s.value;if(s.options.length!==PL.sounds.length){s.innerHTML='';PL.sounds.forEach((n,i)=>{const o=document.createElement('option');o.value=i;o.textContent=n;s.appendChild(o)});if(v)s.value=v}}
+ plRender()}catch(e){}}
+async function plPost(u,p){try{const r=await fetch(u,{method:'POST',body:new URLSearchParams(p)});const j=await r.json();if(!j.ok)toast(j.err||'Fehler',1);return j}catch(e){toast('Keine Verbindung',1);return{}}}
+async function plQuick(k,i,v){const j=await plPost('/api/'+k+'/set',{i,en:v?1:0});if(j.ok)toast(v?'Aktiviert':'Ausgeschaltet');plLoad();poll()}
+function emoFill(id){const s=$('#'+id);if(s.options.length)return;EMO.forEach(([k,i,n])=>{const o=document.createElement('option');o.value=k;o.textContent=i+' '+n;s.appendChild(o)})}
+function dayBtns(){const b=$('#a_days');b.innerHTML='';DAYS.forEach((d,i)=>{const x=document.createElement('button');x.type='button';x.className='btn'+(edDays>>i&1?' on':'');x.textContent=d;
+ x.onclick=()=>{edDays^=1<<i;dayBtns()};b.appendChild(x)});$('#a_dayHint').textContent=edDays?'':'Einmalig: klingelt beim nächsten Mal und schaltet sich danach aus.'}
+function setDays(v){edDays=v;dayBtns()}
+function dlgClose(){$$('.modal').forEach(m=>m.classList.remove('open'));sndStop(1)}
+function alEdit(i){emoFill('a_emo');edI=i;const a=i>=0?PL.alarms.find(x=>x.i===i):{time:'07:00',label:'',days:31,emo:'cute',snd:3,snooze:5,vibe:true,en:true};
+ $('#alTitle').textContent=i>=0?'Wecker bearbeiten':'Neuer Wecker';$('#a_time').value=a.time;$('#a_label').value=a.label;edDays=a.days;dayBtns();
+ $('#a_emo').value=a.emo;$('#a_snd').value=a.snd;$('#a_snooze').value=a.snooze;$('#a_vibe').checked=a.vibe;$('#a_en').checked=a.en;
+ $('#a_del').style.display=$('#a_test').style.display=i>=0?'':'none';$('#alDlg').classList.add('open');$('#a_time').focus()}
+function evEdit(i){emoFill('e_emo');edI=i;const n=new Date(),dd=n.getFullYear()+'-'+String(n.getMonth()+1).padStart(2,'0')+'-'+String(n.getDate()).padStart(2,'0');
+ const e=i>=0?PL.events.find(x=>x.i===i):{label:'',date:dd,time:'12:00',rep:0,lead:15,emo:'star',snd:2,vibe:true,en:true};
+ $('#evTitle').textContent=i>=0?'Termin bearbeiten':'Neuer Termin';$('#e_label').value=e.label;$('#e_date').value=e.date;$('#e_time').value=e.time;
+ $('#e_rep').value=e.rep;$('#e_lead').value=e.lead;$('#e_emo').value=e.emo;$('#e_snd').value=e.snd;$('#e_vibe').checked=e.vibe;$('#e_en').checked=e.en;
+ $('#e_del').style.display=$('#e_test').style.display=i>=0?'':'none';$('#evDlg').classList.add('open');$('#e_label').focus()}
+async function alSave(){if(!$('#a_time').value){toast('Bitte Uhrzeit eingeben',1);return}
+ const j=await plPost('/api/alarm/set',{i:edI,time:$('#a_time').value,label:$('#a_label').value.trim(),days:edDays,emo:$('#a_emo').value,snd:$('#a_snd').value,snooze:$('#a_snooze').value,vibe:$('#a_vibe').checked?1:0,en:$('#a_en').checked?1:0});
+ if(j.ok){dlgClose();toast('Wecker gespeichert');await plLoad();poll()}}
+async function evSave(){if(!$('#e_date').value||!$('#e_time').value){toast('Bitte Datum und Uhrzeit eingeben',1);return}
+ const j=await plPost('/api/event/set',{i:edI,label:$('#e_label').value.trim(),date:$('#e_date').value,time:$('#e_time').value,rep:$('#e_rep').value,lead:$('#e_lead').value,emo:$('#e_emo').value,snd:$('#e_snd').value,vibe:$('#e_vibe').checked?1:0,en:$('#e_en').checked?1:0});
+ if(j.ok){dlgClose();toast('Termin gespeichert');await plLoad();poll()}}
+async function alDel(){if(!confirm('Wecker löschen?'))return;const j=await plPost('/api/alarm/del',{i:edI});if(j.ok){dlgClose();toast('Gelöscht');plLoad();poll()}}
+async function evDel(){if(!confirm('Termin löschen?'))return;const j=await plPost('/api/event/del',{i:edI});if(j.ok){dlgClose();toast('Gelöscht');plLoad();poll()}}
+async function plTest(k){dlgClose();const j=await plPost('/api/'+k+'/test',{i:edI});if(j.ok)toast('Test läuft – am Gerät tippen zum Beenden');poll()}
+function sndPlay(id){fetch('/api/sound?id='+$('#'+id).value,{method:'POST'}).then(r=>r.json()).then(j=>{if(!j.ok)toast(j.err||'Fehler',1)}).catch(()=>toast('Keine Verbindung',1))}
+function sndStop(q){fetch('/api/sound?stop=1',{method:'POST'}).catch(()=>{})}
+async function plSet(k,v){const j=await plPost('/api/settings',{[k]:v});if(j.ok)toast('Gespeichert')}
+async function ringAct(a){await act('/api/alarm/'+a,1);toast(a==='stop'?'Ausgeschaltet':'Schlummern');plLoad()}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')dlgClose()});
+
 // ---- Tabs ----
 function showTab(t){if(!$('.tab[data-t="'+t+'"]'))t='start';
  $$('.tab').forEach(b=>b.classList.toggle('on',b.dataset.t===t));$$('.panel').forEach(p=>p.classList.toggle('on',p.dataset.p===t));
- $('#savebar').classList.toggle('show',dirty&&FORM_TABS.includes(t));if(location.hash!=='#'+t)history.replaceState(null,'','#'+t)}
+ $('#savebar').classList.toggle('show',dirty&&FORM_TABS.includes(t));if(location.hash!=='#'+t)history.replaceState(null,'','#'+t);if(t==='plan')plLoad()}
 $$('.tab').forEach(b=>b.onclick=()=>showTab(b.dataset.t));
 function curTab(){return(location.hash||'#start').slice(1)}
 function setDirty(v){dirty=v;$('#savebar').classList.toggle('show',v&&FORM_TABS.includes(curTab()))}
@@ -344,6 +457,9 @@ async function poll(){try{const s=await (await fetch('/api/status',{cache:'no-st
  ['on','off','auto'].forEach(k=>{$('#q_'+k).classList.toggle('on',s.quiet_mode===k);$('#q2_'+k).classList.toggle('on',s.quiet_mode===k)});
  if(document.activeElement!==$('#liveBr')){$('#liveBr').value=s.bright;lbV.textContent=s.bright+' %'}
  $('#brHint').textContent=s.quiet?'Ruhemodus aktiv – der Regler ändert die Ruhemodus-Helligkeit.':'Der Regler ändert die normale Helligkeit und wirkt sofort.';
+ $('#s_al').textContent=s.next_alarm||'keiner';
+ const rb=$('#ringBar');rb.classList.toggle('open',!!s.ringing);if(s.ringing){$('#ringTxt').textContent=(s.ringing==='alarm'?'⏰ Wecker klingelt':'📅 Termin-Erinnerung')+(PL.ring_label?': '+PL.ring_label:'');$('#ringSn').style.display=s.ringing==='alarm'?'':'none'}
+ if(s.ringing!==lastRing){lastRing=s.ringing;plLoad()}else if(curTab()==='plan'&&!document.querySelector('.modal.open'))plLoad();
  cyCur=s.cycle||0;$('#s_cy').textContent=CY_NAMES[cyCur]||'–';$('#qcy').classList.toggle('on',cyCur===1);
  $('#s_wifi').textContent=s.ssid?(s.ssid+' ('+s.rssi+' dBm)'):'nicht verbunden';$('#s_up').textContent=up(s.uptime);
  $('#w_ssid').textContent=s.ssid||'–';$('#w_rssi').textContent=s.ssid?s.rssi+' dBm':'–';$('#w_ip').textContent=s.ip;
@@ -352,12 +468,13 @@ async function poll(){try{const s=await (await fetch('/api/status',{cache:'no-st
  const H='http://'+s.host+'.local';$('#ex').textContent=[
  'curl "'+H+'/api/emotion?name=heartbeat&ms=5000"','curl "'+H+'/api/text?mode=static&text=Gr%C3%BC%C3%9Fe%20%E2%82%AC"',
  'curl "'+H+'/api/text?mode=loop&speed=8&text=Hallo"','curl "'+H+'/api/notify?text=Build%20fertig"','curl "'+H+'/api/dim?level=20"',
- 'curl "'+H+'/api/quiet?state=on"     # on | off | auto | toggle','curl "'+H+'/api/clock/demo"','curl "'+H+'/api/cycle?mode=run&sec=5&order=random"   # run | idle | off','curl "'+H+'/api/status"'].join('\n');
+ 'curl "'+H+'/api/quiet?state=on"     # on | off | auto | toggle','curl "'+H+'/api/clock/demo"','curl "'+H+'/api/cycle?mode=run&sec=5&order=random"   # run | idle | off','curl "'+H+'/api/alarm/set?time=06:45&days=31&label=Aufstehen&snd=7"   # Wecker Mo–Fr','curl "'+H+'/api/alarm/stop"','curl "'+H+'/api/status"'].join('\n');
 }catch(e){$('#dot').className='dot';$('#subline').textContent='keine Verbindung'}}
 
 // ---- Einstellungen ----
 async function loadCfg(){try{const s=await (await fetch('/api/settings',{cache:'no-store'})).json();
  for(const el of F.elements){if(!el.name||!(el.name in s))continue;if(el.type==='checkbox')el.checked=!!s[el.name];else el.value=s[el.name]}
+ $('#alMax').value=s.alarm_max;$('#evQuiet').checked=!!s.ev_quiet;
  cyFill(s);brV.textContent=s.bright+' %';qbV.textContent=s.quiet_bright+' %';skV.textContent=['','wenig','gering','mittel','hoch','sehr hoch'][s.shake_sens];$('#mqSpeed').value=s.mq_speed;spV.textContent=s.mq_speed;
  const known=TZ.some(t=>t[0]===s.tz);$('#tzsel').value=known?s.tz:'custom';$('#tz').style.display=known?'none':'';$('#wssid').value=s.ssid||'';
  setDirty(false)}catch(e){toast('Einstellungen konnten nicht geladen werden',1)}}

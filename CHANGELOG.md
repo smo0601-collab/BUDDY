@@ -2,6 +2,19 @@
 
 Alle Versionen von PCBuddy. Die neueste steht oben.
 
+## v1.7.0
+
+- **Wecker** (bis zu 8): Uhrzeit, Wochentage (oder einmalig), Name, eigenes Gesicht, eigene Melodie, Vibration, Schlummern (5/10/15 min).
+  Klingelt auch im Ruhemodus mit hellem Display. Am Gerät: tippen oder schütteln = schlummern, 2× tippen oder lang drücken = aus,
+  danach „Guten Morgen!“ mit dem Wetter. Hört nach der eingestellten Klingeldauer von selbst auf.
+- **Termine** (bis zu 20): Datum, Uhrzeit, Name, Wiederholung (einmalig, täglich, wöchentlich, monatlich, jährlich, z. B. Geburtstage),
+  Erinnerung 5 min bis 4 h vorher, eigenes Gesicht, eigene Melodie, Vibration. Im Ruhemodus wahlweise nur Anzeige.
+- **10 Melodien** zum Probehören: Piep, Doppelpiep, klassischer Wecker, Gong, Fanfare, Fröhlich, Sanft, Arcade, Happy Birthday, Für Elise.
+- Neuer Dashboard-Tab **„Wecker & Termine“** mit Listen, Editoren, Ein/Aus-Schaltern und Test-Knopf; Klingel-Leiste mit
+  Schlummern/Aus auf jeder Seite; „Nächster Wecker“ im Status.
+- Neue Info-Folie **„Wecker & Termine“** mit den nächsten drei Einträgen.
+- API: `/api/alarms`, `/api/alarm/set|del|test|stop|snooze`, `/api/event/set|del|test`, `/api/sound`; Seriell: `alarm`, `sound`.
+
 ## v1.6.4
 
 - WLAN-Wächter: verbindet sich nach Router-Neustart oder Abbruch selbst wieder (Neuverbindung, Treiber-Reset, DNS-Prüfung, Neustart nach 20 min); WLAN-Energiesparen aus; Zähler/Grund im Dashboard.

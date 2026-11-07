@@ -1,6 +1,6 @@
 /*
   =====================================================================
-   PCBuddy v1.3 – Desk-Companion mit Web-UI
+   PCBuddy v1.7 – Desk-Companion mit Web-UI
    Board : ESP32-C3 SuperMini (Arduino-ESP32 Core 3.x)
    Display: 0,96" OLED I2C SSD1306 128x64  ODER  1,3" OLED I2C SH1106 128x64
    Lib   : U8g2 (Bibliotheksverwalter: "U8g2" von oliver)
@@ -13,6 +13,8 @@
    - Info-Folien: Wetter (Open-Meteo), Pac-Man-Uhr (NTP), WLAN, IP, Firmware – bleiben bis Doppeltipp
    - Lauftext (Geschwindigkeit einstellbar) & stehender Text mit Umlauten/€
    - Dimmen, Ruhemodus nach Zeitplan, Nachtuhr, Display aus
+   - Wecker (Wochentage, Schlummern) und Termine (Wiederholung, Vorab-Erinnerung)
+     jeweils mit eigenem Gesicht und eigener Melodie
    - WLAN-Setup-Portal, mDNS (name.local), Web-Dashboard, HTTP-API, USB-Seriell
   =====================================================================
 */
@@ -64,11 +66,16 @@ struct Settings {
   uint32_t emoMask = 0xFFFFFFFF;     // welche Emotionen mitmachen (Bit = Emotion)
   uint8_t mqSpeed = 5;               // Lauftext 1..10
   uint8_t sleepMin = 0;              // 0 = nie
+  // Wecker & Termine
+  uint8_t alarmMax = 10;             // Wecker klingelt höchstens so viele Minuten
+  bool    evQuiet = false;           // Termine im Ruhemodus mit Ton
+  bool    slEvents = true;           // Info-Folie "Wecker & Termine"
 };
 
-enum Mode : uint8_t { M_FACE, M_INFO, M_MARQUEE, M_SLEEP, M_PORTAL, M_MSG, M_TEXT, M_CLOCK, M_OFF, M_UPDATE };
+enum Mode : uint8_t { M_FACE, M_INFO, M_MARQUEE, M_SLEEP, M_PORTAL, M_MSG, M_TEXT, M_CLOCK, M_OFF, M_UPDATE,
+                      M_ALARM, M_EVENT };
 const char* const MODE_NAMES[] = {"Gesicht", "Info", "Lauftext", "Schlaf", "Setup-Portal", "Meldung",
-                                  "Text", "Uhr", "Display aus", "Update"};
+                                  "Text", "Uhr", "Display aus", "Update", "Wecker", "Termin"};
 
 enum Emotion : uint8_t {
   E_NEUTRAL, E_SERIOUS, E_SLEEPY, E_CRYING, E_SAD, E_CUTE, E_KISS, E_MINILOVE,
@@ -81,12 +88,32 @@ const char* const EMO_NAMES[E_COUNT] = {
   "heartbeat", "surprised", "dizzy", "laugh", "star", "confused", "uh"
 };
 
-enum Slide : uint8_t { S_WEATHER, S_CLOCK, S_WIFI, S_IP, S_FW, S_COUNT };
+enum Slide : uint8_t { S_WEATHER, S_CLOCK, S_EVENTS, S_WIFI, S_IP, S_FW, S_COUNT };
 
 struct Particle { float x, y, vx, vy; int16_t life; uint8_t type; }; // 0 Herz, 1 z, 2 Funkeln
 struct Note { uint16_t f, ms; };
 struct PacWP { int16_t x, y; bool eat; };          // Wegpunkt der Pac-Man-Uhr
 enum PacState : uint8_t { PAC_ROAM, PAC_EAT };
+
+// ---- Wecker & Termine (werden als Block im NVS gespeichert – Aufbau nicht ändern!) ----
+#define MAX_ALARMS 8
+#define MAX_EVENTS 20
+struct AlarmEntry {
+  uint8_t en, h, m;
+  uint8_t days;          // Bit 0 = Mo … Bit 6 = So, 0 = einmalig (nächstes Mal, danach aus)
+  uint8_t emo, snd, vibe;
+  uint8_t snooze;        // Schlummern in Minuten (0 = kein Schlummern)
+  char    label[24];
+};
+struct EventEntry {
+  uint16_t y;
+  uint8_t  mo, day, h, mi;
+  uint8_t  rep;          // 0 einmalig, 1 täglich, 2 wöchentlich, 3 monatlich, 4 jährlich
+  uint8_t  lead;         // so viele Minuten vorher erinnern (0 = zur Uhrzeit)
+  uint8_t  emo, snd, vibe, en;
+  char     label[34];
+};
+struct Melody { const char* name; const Note* n; uint8_t len; };
 
 Settings    cfg;
 Preferences prefs;
@@ -179,6 +206,29 @@ uint32_t pcWaitSince = 0;
 
 // ---- Seriell ----
 String   serBuf;
+
+// ---- Wecker & Termine ----
+AlarmEntry alarms[MAX_ALARMS];
+EventEntry events[MAX_EVENTS];
+uint8_t  alarmCount = 0, eventCount = 0;
+uint8_t  ringKind = 0;              // 0 nichts, 1 Wecker, 2 Termin
+int8_t   ringIdx = -1;
+bool     ringTest = false;          // per "Testen" ausgelöst
+uint32_t ringStart = 0, ringLastVibe = 0;
+Mode     ringReturn = M_FACE;
+bool     ringWasQuiet = false;      // vorher Nachtanzeige (Schlaf/Uhr/aus)
+bool     ringSound = false, ringVibe = false;
+String   ringLabel;
+char     ringWhen[24] = "";         // Termin: "in 15 min · 14:00"
+String   ringLines[3];
+uint8_t  ringLineCnt = 0, ringFont = 2;
+int8_t   snoozeIdx = -1;            // geschlummerter Wecker
+time_t   snoozeAt = 0;
+uint8_t  snoozeCount = 0;
+int8_t   pendingEvent = -1;         // Termin, der während des Weckers fällig wurde
+uint32_t planMinKey = 0;            // zuletzt geprüfte Minute
+uint32_t planCacheAt = 0;           // Info-Folie: Liste der nächsten Einträge
+bool     planDirty = true;
 
 // =====================================================================
 //  Hilfsfunktionen
@@ -278,6 +328,9 @@ void loadSettings() {
   cfg.emoMask     = prefs.getUInt("emoMask", 0xFFFFFFFF);
   cfg.mqSpeed     = constrain(prefs.getUChar("mqSpeed", 5), 1, 10);
   cfg.sleepMin    = prefs.getUChar("sleepMin", 0);
+  cfg.alarmMax    = constrain(prefs.getUChar("alMax", 10), 1, 60);
+  cfg.evQuiet     = prefs.getBool("evQuiet", false);
+  cfg.slEvents    = prefs.getBool("slEv", true);
   prefs.end();
 }
 
@@ -318,6 +371,9 @@ void saveSettings() {
   prefs.putUInt("emoMask", cfg.emoMask);
   prefs.putUChar("mqSpeed", cfg.mqSpeed);
   prefs.putUChar("sleepMin", cfg.sleepMin);
+  prefs.putUChar("alMax", cfg.alarmMax);
+  prefs.putBool("evQuiet", cfg.evQuiet);
+  prefs.putBool("slEv", cfg.slEvents);
   prefs.end();
 }
 
@@ -342,7 +398,7 @@ void beep(uint16_t f, uint16_t ms) {
 }
 
 void playNotes(const Note* n, uint8_t len) {
-  if (PIN_BUZZER < 0 || !soundOn()) return;
+  if (PIN_BUZZER < 0 || !soundOn() || ringing()) return;
   nqLen = min<uint8_t>(len, 10);
   for (uint8_t i = 0; i < nqLen; i++) nq[i] = n[i];
   nqPos = 0; nqNext = 0;
@@ -364,12 +420,107 @@ void soundLoop() {
   }
 }
 
+// ---- Melodien für Wecker & Termine ----
+// Alle Melodien sind eigene Tonfolgen bzw. gemeinfrei (Happy Birthday, Für Elise).
+#define N_C4 262
+#define N_E4 330
+#define N_F4 349
+#define N_G4 392
+#define N_GS4 415
+#define N_A4 440
+#define N_B4 494
+#define N_C5 523
+#define N_D5 587
+#define N_DS5 622
+#define N_E5 659
+#define N_F5 698
+#define N_G5 784
+#define N_C6 1047
+#define N_E6 1319
+#define N_G6 1568
+#define N_C7 2093
+const Note MEL_BEEP[]    = {{2800, 150}, {0, 850}};
+const Note MEL_DOUBLE[]  = {{2800, 100}, {0, 80}, {2800, 100}, {0, 720}};
+const Note MEL_CLASSIC[] = {{2400, 70}, {0, 40}, {2400, 70}, {0, 40}, {2400, 70}, {0, 40}, {2400, 70}, {0, 500}};
+const Note MEL_GONG[]    = {{N_E5, 500}, {N_C5, 800}, {0, 700}};
+const Note MEL_FANFARE[] = {{N_G4, 150}, {N_C5, 150}, {N_E5, 150}, {N_G5, 300}, {N_E5, 150}, {N_G5, 500}, {0, 700}};
+const Note MEL_HAPPY[]   = {{N_C5, 120}, {N_E5, 120}, {N_G5, 120}, {N_C6, 240}, {N_G5, 120}, {N_C6, 360}, {0, 600}};
+const Note MEL_SOFT[]    = {{N_C5, 300}, {N_E5, 300}, {N_G5, 300}, {N_C6, 600}, {0, 1200}};
+const Note MEL_BDAY[]    = {
+  {N_G4, 300}, {N_G4, 100}, {N_A4, 400}, {N_G4, 400}, {N_C5, 400}, {N_B4, 800},
+  {N_G4, 300}, {N_G4, 100}, {N_A4, 400}, {N_G4, 400}, {N_D5, 400}, {N_C5, 800},
+  {N_G4, 300}, {N_G4, 100}, {N_G5, 400}, {N_E5, 400}, {N_C5, 400}, {N_B4, 400}, {N_A4, 800},
+  {N_F5, 300}, {N_F5, 100}, {N_E5, 400}, {N_C5, 400}, {N_D5, 400}, {N_C5, 900}, {0, 900}};
+const Note MEL_ELISE[]   = {
+  {N_E5, 150}, {N_DS5, 150}, {N_E5, 150}, {N_DS5, 150}, {N_E5, 150}, {N_B4, 150}, {N_D5, 150}, {N_C5, 150},
+  {N_A4, 300}, {0, 150}, {N_C4, 150}, {N_E4, 150}, {N_A4, 150}, {N_B4, 300}, {0, 150},
+  {N_E4, 150}, {N_GS4, 150}, {N_B4, 150}, {N_C5, 300}, {0, 150},
+  {N_E4, 150}, {N_E5, 150}, {N_DS5, 150}, {N_E5, 150}, {N_DS5, 150}, {N_E5, 150}, {N_B4, 150}, {N_D5, 150},
+  {N_C5, 150}, {N_A4, 450}, {0, 900}};
+const Note MEL_ARCADE[]  = {{N_C6, 70}, {N_E6, 70}, {N_G6, 70}, {N_C7, 140}, {0, 60}, {N_G6, 70}, {N_C7, 70}, {2637, 200}, {0, 700}};
+#define MEL(a) a, (uint8_t)(sizeof(a) / sizeof(Note))
+const Melody MELODIES[] = {
+  {"Aus", nullptr, 0},
+  {"Piep", MEL(MEL_BEEP)},
+  {"Doppelpiep", MEL(MEL_DOUBLE)},
+  {"Klassischer Wecker", MEL(MEL_CLASSIC)},
+  {"Gong", MEL(MEL_GONG)},
+  {"Fanfare", MEL(MEL_FANFARE)},
+  {"Fröhlich", MEL(MEL_HAPPY)},
+  {"Sanft", MEL(MEL_SOFT)},
+  {"Happy Birthday", MEL(MEL_BDAY)},
+  {"Für Elise", MEL(MEL_ELISE)},
+  {"Arcade", MEL(MEL_ARCADE)},
+};
+const uint8_t MELODY_COUNT = sizeof(MELODIES) / sizeof(Melody);
+
+const Note* melN = nullptr;
+uint8_t  melLen = 0, melPos = 0;
+int16_t  melLoops = 0;                 // < 0 = endlos
+uint32_t melNext = 0;
+
+// loops: wie oft (‑1 = bis stopMelody). Spielt unabhängig von Ton aus/Ruhemodus –
+// ob gespielt werden darf, entscheidet der Aufrufer.
+void playMelody(uint8_t id, int16_t loops) {
+  if (PIN_BUZZER < 0 || id >= MELODY_COUNT || !MELODIES[id].n) { melN = nullptr; return; }
+  nqLen = nqPos = 0;                   // laufende kurze Töne abbrechen
+  melN = MELODIES[id].n; melLen = MELODIES[id].len; melPos = 0;
+  melLoops = loops ? loops : 1; melNext = millis();
+}
+
+void stopMelody() {
+  if (melN && PIN_BUZZER >= 0) noTone(PIN_BUZZER);
+  melN = nullptr;
+}
+
+void melodyLoop() {
+  if (!melN || (int32_t)(millis() - melNext) < 0) return;
+  if (melPos >= melLen) {
+    if (melLoops > 0 && --melLoops == 0) { melN = nullptr; return; }
+    melPos = 0;
+  }
+  Note n = melN[melPos++];
+  if (n.f) {
+    uint16_t on = n.ms - min<uint16_t>(n.ms / 8, 30);   // kurze Pause zwischen gleichen Tönen
+    tone(PIN_BUZZER, n.f, on);
+    scheduleHeal(on + 40);
+  }
+  melNext = millis() + n.ms;
+}
+
 extern uint32_t vibeQuietUntil;
 void vibrate(uint16_t ms) {
   if (PIN_VIBRO < 0 || !vibeOn()) return;
   digitalWrite(PIN_VIBRO, HIGH);
   vibeOff = millis() + ms;
   vibeQuietUntil = vibeOff + 300;                       // Motor schüttelt den Neigungssensor mit
+}
+
+void vibeRaw(uint16_t ms) {        // Vibration ohne Ruhemodus-Prüfung (Wecker)
+  if (PIN_VIBRO < 0) return;
+  digitalWrite(PIN_VIBRO, HIGH);
+  vibeOff = millis() + ms;
+  vibeQuietUntil = vibeOff + 300;
 }
 
 void vibeLoop() {
@@ -499,6 +650,8 @@ void updateQuiet() {
 void updateBrightness() {
   int pct = quietNow ? cfg.quietBright : cfg.bright;
   if (mode == M_SLEEP) pct = min(pct, max(1, cfg.bright / 8));
+  if (mode == M_ALARM) pct = max<int>(cfg.bright, 60);          // Wecker: hell, auch im Ruhemodus
+  if (mode == M_EVENT) pct = max(pct, 25);
   setPanelLevel(pct);
 }
 
@@ -1337,6 +1490,7 @@ void buildSlides() {
   slideCount = 0;
   if (cfg.slWeather) slides[slideCount++] = S_WEATHER;
   if (cfg.slClock)   slides[slideCount++] = S_CLOCK;
+  if (cfg.slEvents)  slides[slideCount++] = S_EVENTS;
   if (cfg.slWifi)    slides[slideCount++] = S_WIFI;
   if (cfg.slIp)      slides[slideCount++] = S_IP;
   if (cfg.slFw || slideCount == 0) slides[slideCount++] = S_FW;
@@ -1390,6 +1544,10 @@ void drawInfo(uint32_t now) {
     }
     case S_CLOCK:
       drawPacClock(now, 0, 0);
+      break;
+    case S_EVENTS:
+      slideHeader("Wecker & Termine");
+      drawPlanSlide();
       break;
     case S_WIFI: {
       slideHeader("WLAN");
@@ -1586,12 +1744,491 @@ void drawClockScreen(uint32_t now) {
   drawPacClock(now, ox, oy);
 }
 
+
+// =====================================================================
+//  Wecker & Termine
+// =====================================================================
+const char* const WDAY_SHORT[7] = {"So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"};   // tm_wday
+const char* const REP_NAMES[5] = {"einmalig", "täglich", "wöchentlich", "monatlich", "jährlich"};
+
+// Tage seit 1970-01-01 (proleptischer gregorianischer Kalender, ohne Zeitzone)
+int32_t daysFromCivil(int y, int m, int dd) {
+  y -= m <= 2;
+  int era = (y >= 0 ? y : y - 399) / 400;
+  unsigned yoe = (unsigned)(y - era * 400);
+  unsigned doy = (153 * (unsigned)(m > 2 ? m - 3 : m + 9) + 2) / 5 + dd - 1;
+  unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + (int32_t)doe - 719468;
+}
+
+time_t mkLocal(int y, int mo, int dd, int h, int mi) {   // Ortszeit -> time_t (normalisiert Überläufe)
+  struct tm tm = {};
+  tm.tm_year = y - 1900; tm.tm_mon = mo - 1; tm.tm_mday = dd;
+  tm.tm_hour = h; tm.tm_min = mi; tm.tm_sec = 0; tm.tm_isdst = -1;
+  return mktime(&tm);
+}
+
+void copyLabel(char* dst, size_t cap, const String& in) {   // UTF-8-sicher kürzen
+  String s = normalizeText(in);
+  s.trim();
+  size_t n = 0;
+  while (n < s.length()) {
+    size_t k = n + utf8Len(s[n]);
+    if (k > cap - 1) break;
+    n = k;
+  }
+  memcpy(dst, s.c_str(), n);
+  dst[n] = 0;
+}
+
+bool eventOnDate(const EventEntry& e, int y, int mo, int dd) {
+  int32_t dn = daysFromCivil(y, mo, dd), ds = daysFromCivil(e.y, e.mo, e.day);
+  if (dn < ds) return false;
+  switch (e.rep) {
+    case 0: return dn == ds;
+    case 1: return true;
+    case 2: return (dn - ds) % 7 == 0;
+    case 3: return dd == e.day;
+    case 4: return mo == e.mo && dd == e.day;
+  }
+  return false;
+}
+
+// Liegt zur (lokalen) Zeit t ein Termin an? (Minutengenau)
+bool eventAt(const EventEntry& e, time_t t) {
+  struct tm lt; localtime_r(&t, &lt);
+  return lt.tm_hour == e.h && lt.tm_min == e.mi && eventOnDate(e, lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday);
+}
+
+bool alarmAt(const AlarmEntry& a, const struct tm& lt) {
+  if (!a.en || lt.tm_hour != a.h || lt.tm_min != a.m) return false;
+  return a.days == 0 || ((a.days >> ((lt.tm_wday + 6) % 7)) & 1);
+}
+
+// Nächstes Klingeln eines Weckers nach 'now' (0 = keins)
+time_t nextAlarmTime(const AlarmEntry& a, time_t now) {
+  if (!a.en) return 0;
+  struct tm lt; localtime_r(&now, &lt);
+  for (int off = 0; off <= 7; off++) {
+    time_t t = mkLocal(lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday + off, a.h, a.m);
+    if (t <= now) continue;
+    struct tm ct; localtime_r(&t, &ct);
+    if (alarmAt(a, ct)) return t;
+  }
+  return 0;
+}
+
+// Nächster Termin (Termin-Zeitpunkt, nicht Erinnerung) nach 'now' (0 = keiner mehr)
+time_t nextEventTime(const EventEntry& e, time_t now) {
+  if (!e.en) return 0;
+  struct tm lt; localtime_r(&now, &lt);
+  int ty = lt.tm_year + 1900, tmo = lt.tm_mon + 1, td = lt.tm_mday;
+  bool startLater = daysFromCivil(e.y, e.mo, e.day) > daysFromCivil(ty, tmo, td);
+  int by = startLater ? e.y : ty, bmo = startLater ? e.mo : tmo, bd = startLater ? e.day : td;
+  auto ok = [&](time_t t) {
+    if (t <= now) return false;
+    struct tm ct; localtime_r(&t, &ct);
+    return ct.tm_hour == e.h && ct.tm_min == e.mi && eventOnDate(e, ct.tm_year + 1900, ct.tm_mon + 1, ct.tm_mday);
+  };
+  time_t t;
+  switch (e.rep) {
+    case 0: t = mkLocal(e.y, e.mo, e.day, e.h, e.mi); return ok(t) ? t : 0;
+    case 1: case 2:
+      for (int off = 0; off <= 8; off++) { t = mkLocal(by, bmo, bd + off, e.h, e.mi); if (ok(t)) return t; }
+      return 0;
+    case 3:
+      for (int k = 0; k <= 24; k++) { t = mkLocal(by, bmo + k, e.day, e.h, e.mi); if (ok(t)) return t; }
+      return 0;
+    case 4:
+      for (int k = 0; k <= 8; k++) { t = mkLocal(by + k, e.mo, e.day, e.h, e.mi); if (ok(t)) return t; }
+      return 0;
+  }
+  return 0;
+}
+
+// "heute 07:30", "morgen 07:30", "Mo 07:30" (innerhalb einer Woche), sonst "Mo 12.03. 07:30"
+String whenText(time_t t, time_t now) {
+  if (!t) return "";
+  struct tm a, b; localtime_r(&t, &a); localtime_r(&now, &b);
+  int32_t dd = daysFromCivil(a.tm_year + 1900, a.tm_mon + 1, a.tm_mday) - daysFromCivil(b.tm_year + 1900, b.tm_mon + 1, b.tm_mday);
+  char s[32];
+  if (dd == 0)      snprintf(s, sizeof(s), "heute %02d:%02d", a.tm_hour, a.tm_min);
+  else if (dd == 1) snprintf(s, sizeof(s), "morgen %02d:%02d", a.tm_hour, a.tm_min);
+  else if (dd < 7)  snprintf(s, sizeof(s), "%s %02d:%02d", WDAY_SHORT[a.tm_wday], a.tm_hour, a.tm_min);
+  else if (a.tm_year == b.tm_year) snprintf(s, sizeof(s), "%s %02d.%02d. %02d:%02d", WDAY_SHORT[a.tm_wday], a.tm_mday, a.tm_mon + 1, a.tm_hour, a.tm_min);
+  else snprintf(s, sizeof(s), "%02d.%02d.%04d %02d:%02d", a.tm_mday, a.tm_mon + 1, a.tm_year + 1900, a.tm_hour, a.tm_min);
+  return s;
+}
+
+// ---- Speichern ----
+void sanitizeAlarm(AlarmEntry& a) {
+  a.en = a.en ? 1 : 0; a.h %= 24; a.m %= 60; a.days &= 0x7F;
+  if (a.emo >= E_COUNT) a.emo = E_CUTE;
+  if (a.snd >= MELODY_COUNT) a.snd = 3;
+  a.vibe = a.vibe ? 1 : 0;
+  if (a.snooze > 30) a.snooze = 30;
+  a.label[sizeof(a.label) - 1] = 0;
+}
+
+void sanitizeEvent(EventEntry& e) {
+  e.en = e.en ? 1 : 0;
+  if (e.y < 1900 || e.y > 2099) e.y = 2026;
+  e.mo = constrain(e.mo, 1, 12); e.day = constrain(e.day, 1, 31);
+  e.h %= 24; e.mi %= 60;
+  if (e.rep > 4) e.rep = 0;
+  if (e.emo >= E_COUNT) e.emo = E_STAR;
+  if (e.snd >= MELODY_COUNT) e.snd = 2;
+  e.vibe = e.vibe ? 1 : 0;
+  e.label[sizeof(e.label) - 1] = 0;
+}
+
+void loadPlans() {
+  prefs.begin("pcbuddy", false);
+  alarmCount = eventCount = 0;
+  if (prefs.getUChar("plVer", 0) == 1) {
+    size_t n = prefs.getBytesLength("alarms");
+    if (n && n % sizeof(AlarmEntry) == 0 && n <= sizeof(alarms)) {
+      prefs.getBytes("alarms", alarms, n);
+      alarmCount = n / sizeof(AlarmEntry);
+    }
+    n = prefs.getBytesLength("events");
+    if (n && n % sizeof(EventEntry) == 0 && n <= sizeof(events)) {
+      prefs.getBytes("events", events, n);
+      eventCount = n / sizeof(EventEntry);
+    }
+  }
+  prefs.end();
+  for (uint8_t i = 0; i < alarmCount; i++) sanitizeAlarm(alarms[i]);
+  for (uint8_t i = 0; i < eventCount; i++) sanitizeEvent(events[i]);
+  planDirty = true;
+}
+
+void savePlans() {
+  prefs.begin("pcbuddy", false);
+  prefs.putUChar("plVer", 1);
+  if (alarmCount) prefs.putBytes("alarms", alarms, alarmCount * sizeof(AlarmEntry)); else prefs.remove("alarms");
+  if (eventCount) prefs.putBytes("events", events, eventCount * sizeof(EventEntry)); else prefs.remove("events");
+  prefs.end();
+  planDirty = true;
+}
+
+// ---- Klingeln ----
+bool ringing() { return ringKind != 0; }
+
+void prepareRingText() {
+  ringLineCnt = 0;
+  String s = ringLabel.length() ? ringLabel : String(ringKind == 1 ? "Wecker" : "Termin");
+  static const uint8_t TRY[3] = {2, 3, 4};              // helvB12, helvB10, helvB08
+  static const uint8_t MAXL[3] = {2, 2, 3};
+  for (uint8_t k = 0; k < 3; k++) {
+    uint8_t cnt = 0;
+    if (wrapInto(s, TRY[k], cnt) && cnt <= MAXL[k]) {
+      ringFont = TRY[k]; ringLineCnt = cnt;
+      for (uint8_t i = 0; i < cnt; i++) ringLines[i] = txtBuf[i];
+      txtCount = 0;
+      return;
+    }
+  }
+  ringFont = 4; ringLineCnt = 1; ringLines[0] = s.substring(0, 20); txtCount = 0;
+}
+
+// kind 1 = Wecker, 2 = Termin
+void startRing(uint8_t kind, int8_t idx, bool test) {
+  if (mode == M_UPDATE) return;
+  if (kind == 1 && (idx < 0 || idx >= alarmCount)) return;
+  if (kind == 2 && (idx < 0 || idx >= eventCount)) return;
+  if (ringKind == 1 && kind == 2) { pendingEvent = idx; return; }   // Wecker hat Vorrang
+  if (!ringing()) {
+    ringWasQuiet = quietScreen || mode == M_SLEEP || mode == M_OFF;
+    ringReturn = (mode == M_INFO || mode == M_PORTAL || (mode == M_CLOCK && !quietScreen)) ? mode : M_FACE;
+  }
+  stopMelody();
+  ringKind = kind; ringIdx = idx; ringTest = test;
+  ringStart = millis(); ringLastVibe = 0;
+  uint8_t em, snd;
+  if (kind == 1) {
+    const AlarmEntry& a = alarms[idx];
+    em = a.emo; snd = a.snd; ringLabel = a.label;
+    ringSound = true;                                   // Wecker klingelt immer (auch im Ruhemodus)
+    ringVibe = a.vibe;
+    ringWhen[0] = 0;
+    if (snoozeIdx != idx) snoozeCount = 0;
+  } else {
+    const EventEntry& e = events[idx];
+    em = e.emo; snd = e.snd; ringLabel = e.label;
+    bool quietBlock = quietNow && !cfg.evQuiet;
+    ringSound = !(quietBlock && cfg.quietMute);
+    ringVibe = e.vibe && !(quietBlock && cfg.quietNoVibe);
+    if (e.lead == 0 || test) snprintf(ringWhen, sizeof(ringWhen), "jetzt · %02u:%02u", e.h, e.mi);
+    else if (e.lead >= 60 && e.lead % 60 == 0) snprintf(ringWhen, sizeof(ringWhen), "in %u h · %02u:%02u", e.lead / 60, e.h, e.mi);
+    else snprintf(ringWhen, sizeof(ringWhen), "in %u min · %02u:%02u", e.lead, e.h, e.mi);
+  }
+  mode = (kind == 1) ? M_ALARM : M_EVENT;
+  quietScreen = false;
+  emo = (Emotion)em; emoUntil = 0; emoStart = millis(); emoReturn = M_FACE; cycleSet = false;
+  clearParticles(); nextSpawn = 0;
+  prepareRingText();
+  if (ringSound) playMelody(snd, kind == 1 ? -1 : 3);
+  touchActivity();
+  Serial.printf("[%s] %s%s\n", kind == 1 ? "Wecker" : "Termin", ringLabel.c_str(), test ? " (Test)" : "");
+}
+
+void ringSilence() {
+  stopMelody();
+  if (PIN_VIBRO >= 0) digitalWrite(PIN_VIBRO, LOW);
+  vibeOff = 0;
+  scheduleHeal(60);
+}
+
+void leaveRingScreen() {
+  if (ringReturn == M_INFO || ringReturn == M_CLOCK || ringReturn == M_PORTAL) { mode = ringReturn; emo = E_NEUTRAL; }
+  else if (ringWasQuiet && quietNow) { setEmotion(E_NEUTRAL, 0, false); enterQuietScreen(); }
+  else setEmotion(E_NEUTRAL, 0, false);
+  ringReturn = M_FACE;
+}
+
+// snooze = true: Wecker schlummern (falls eingestellt), sonst ausschalten
+void stopRing(bool snooze, bool silent = false);
+void stopRing(bool snooze, bool silent) {
+  if (!ringing()) return;
+  uint8_t kind = ringKind; int8_t idx = ringIdx; bool test = ringTest;
+  ringKind = 0; ringIdx = -1;
+  ringSilence();
+  if (silent) { if (kind == 1) { snoozeAt = 0; snoozeIdx = -1; } return; }
+  if (kind == 1) {
+    const AlarmEntry& a = alarms[idx];
+    if (snooze && a.snooze && !test) {
+      snoozeIdx = idx; snoozeCount++;
+      snoozeAt = time(nullptr) + a.snooze * 60;
+      struct tm lt; localtime_r(&snoozeAt, &lt);
+      char b[24]; snprintf(b, sizeof(b), "bis %02d:%02d", lt.tm_hour, lt.tm_min);
+      leaveRingScreen();
+      showMsg("Schlummern...", b, ringLabel, 2500);
+      if (soundOn()) playNotes(SND_UH, 3);
+      planDirty = true;
+    } else {
+      snoozeAt = 0; snoozeIdx = -1; snoozeCount = 0;
+      if (!test && a.days == 0) { alarms[idx].en = 0; savePlans(); }   // einmaliger Wecker -> aus
+      leaveRingScreen();
+      struct tm lt; time_t t = time(nullptr); localtime_r(&t, &lt);
+      String l2;
+      if (wxValid) { char b[40]; snprintf(b, sizeof(b), "%.0f° %s", (float)wxTemp, wxText(wxCode)); l2 = b; }
+      else { char b[12]; snprintf(b, sizeof(b), "%02d:%02d", lt.tm_hour, lt.tm_min); l2 = b; }
+      if (test) showMsg("Test beendet", "", "", 1500);
+      else if (lt.tm_hour >= 4 && lt.tm_hour < 11) showMsg("Guten Morgen!", l2, ringLabel, 5000);
+      else if (lt.tm_hour >= 11 && lt.tm_hour < 18) showMsg("Wecker aus", l2, ringLabel, 3000);
+      else showMsg("Wecker aus", l2, ringLabel, 3000);
+      if (soundOn()) playNotes(SND_WAKE, 3);
+      planDirty = true;
+    }
+  } else {
+    leaveRingScreen();
+  }
+  if (pendingEvent >= 0) { int8_t pe = pendingEvent; pendingEvent = -1; startRing(2, pe, false); }
+}
+
+// Einmal pro Sekunde: fällige Wecker/Termine prüfen
+void planLoop() {
+  static uint32_t lastCheck = 0;
+  if (since(lastCheck) < 1000) return;
+  lastCheck = millis();
+  if (!timeValid() || mode == M_UPDATE) return;
+  time_t now = time(nullptr);
+  if (snoozeAt && now >= snoozeAt && !ringing()) {
+    int8_t i = snoozeIdx; snoozeAt = 0;
+    if (i >= 0 && i < alarmCount) startRing(1, i, false);
+  }
+  uint32_t key = (uint32_t)(now / 60);
+  if (key == planMinKey) return;
+  uint32_t from = key;
+  if (planMinKey && key > planMinKey && key - planMinKey <= 5) from = planMinKey + 1;   // Zeitsprung: verpasste Minuten nachholen
+  planMinKey = key;
+  for (uint32_t k = from; k <= key; k++) {
+    time_t mt = (time_t)k * 60;
+    struct tm lt; localtime_r(&mt, &lt);
+    for (uint8_t i = 0; i < alarmCount; i++)
+      if (alarmAt(alarms[i], lt)) { if (snoozeIdx == i) snoozeAt = 0; startRing(1, i, false); }
+    for (uint8_t i = 0; i < eventCount; i++) {
+      const EventEntry& e = events[i];
+      if (e.en && eventAt(e, mt + (time_t)e.lead * 60)) startRing(2, i, false);
+    }
+  }
+  planDirty = true;
+}
+
+void ringLoop(uint32_t now) {
+  if (!ringing()) return;
+  if (mode != M_ALARM && mode != M_EVENT) { stopRing(false, true); return; }   // anderer Befehl hat übernommen
+  uint32_t el = since(ringStart);
+  if (ringKind == 1) {
+    if (ringVibe && (!ringLastVibe || since(ringLastVibe) >= 2000)) { ringLastVibe = now; vibeRaw(500); }
+    if (el > cfg.alarmMax * 60000UL) { Serial.println("[Wecker] automatisch aus"); stopRing(false); }
+  } else {
+    if (ringVibe && el < 2000 && (!ringLastVibe || since(ringLastVibe) >= 700)) { ringLastVibe = now; vibeRaw(250); }
+    if (el > 180000UL) stopRing(false);
+  }
+}
+
+// ---- Anzeige beim Klingeln ----
+void drawBell(int cx, int cy, float swing) {
+  int sw = (int)(swing * 3);
+  d->drawDisc(cx, cy - 12, 2);                                      // Aufhängung
+  d->drawDisc(cx, cy - 4, 8, U8G2_DRAW_UPPER_LEFT | U8G2_DRAW_UPPER_RIGHT);
+  d->drawBox(cx - 8, cy - 4, 17, 9);
+  d->drawTriangle(cx - 8, cy + 4, cx - 12, cy + 9, cx - 8, cy + 9);
+  d->drawTriangle(cx + 8, cy + 4, cx + 13, cy + 9, cx + 8, cy + 9);
+  d->drawBox(cx - 12, cy + 8, 26, 3);
+  d->drawDisc(cx + sw, cy + 13, 2);                                 // Klöppel
+  if (swing > 0.3f)  { d->drawLine(cx + 13, cy - 9, cx + 15, cy - 11); d->drawLine(cx + 14, cy - 3, cx + 17, cy - 3); }
+  if (swing < -0.3f) { d->drawLine(cx - 13, cy - 9, cx - 15, cy - 11); d->drawLine(cx - 14, cy - 3, cx - 17, cy - 3); }
+}
+
+void drawCalendarIcon(int x, int y) {    // 9x9
+  d->drawFrame(x, y + 1, 9, 8);
+  d->drawHLine(x, y + 3, 9);
+  d->drawPixel(x + 2, y); d->drawPixel(x + 6, y);
+  d->drawPixel(x + 2, y + 5); d->drawPixel(x + 4, y + 5); d->drawPixel(x + 6, y + 5);
+}
+
+void drawSmallBell(int x, int y) {       // 9x9
+  d->drawDisc(x + 4, y + 4, 3, U8G2_DRAW_UPPER_LEFT | U8G2_DRAW_UPPER_RIGHT);
+  d->drawBox(x + 1, y + 4, 7, 3);
+  d->drawHLine(x, y + 7, 9);
+  d->drawPixel(x + 4, y + 8);
+  d->drawPixel(x + 4, y);
+}
+
+void drawRingCard(uint32_t now) {
+  char b[24];
+  struct tm lt; time_t t = time(nullptr); localtime_r(&t, &lt);
+  if (ringKind == 1) {
+    float swing = sinf(now / 90.0f);
+    drawBell(20, 22, swing);
+    d->setFont(u8g2_font_logisoso24_tf);
+    if (timeValid()) snprintf(b, sizeof(b), "%02d:%02d", lt.tm_hour, lt.tm_min);
+    else snprintf(b, sizeof(b), "%02u:%02u", alarms[ringIdx].h, alarms[ringIdx].m);
+    d->drawStr(48, 34, b);
+    String l = ringLabel.length() ? ringLabel : String("Wecker");
+    d->setFont(u8g2_font_helvB10_tf);
+    if (d->getUTF8Width(l.c_str()) > 126) d->setFont(u8g2_font_helvB08_tf);
+    while (l.length() > 1 && d->getUTF8Width(l.c_str()) > 126) {
+      size_t cut = l.length() - 1;
+      while (cut > 0 && ((uint8_t)l[cut] & 0xC0) == 0x80) cut--;
+      l = l.substring(0, cut);
+    }
+    drawCentered(l.c_str(), 50);
+    d->setFont(u8g2_font_5x7_tf);
+    bool sn = alarms[ringIdx].snooze && !ringTest;
+    drawCentered(sn ? "Tippen=Schlummern 2x=Aus" : "Tippen = Aus", 63);
+  } else {
+    drawCalendarIcon(0, 0);
+    d->setFont(u8g2_font_helvB08_tf);
+    d->drawUTF8(12, 8, "Termin");
+    if (timeValid()) {
+      snprintf(b, sizeof(b), "%02d:%02d", lt.tm_hour, lt.tm_min);
+      d->setFont(u8g2_font_helvR08_tf);
+      d->drawStr(128 - d->getStrWidth(b), 8, b);
+    }
+    d->drawHLine(0, 11, 128);
+    d->setFont(TXT_FONTS[ringFont]);
+    int lh = TXT_LH[ringFont];
+    int top = 13, bottom = 52;
+    int asc = d->getAscent();
+    int y = top + (bottom - top - ringLineCnt * lh) / 2 + asc + (lh - asc) / 2;
+    for (uint8_t i = 0; i < ringLineCnt; i++, y += lh) drawCentered(ringLines[i].c_str(), y);
+    d->setFont(u8g2_font_helvR08_tf);
+    drawCentered(ringWhen, 62);
+  }
+}
+
+void drawRing(uint32_t now) {
+  uint32_t el = since(ringStart);
+  bool card = (el % 4500) < 2500;                     // abwechselnd: Anzeige 2,5 s, Gesicht 2 s
+  if (card) { drawRingCard(now); return; }
+  Mode sv = mode; mode = M_FACE;                       // Gesicht mit der gewählten Emotion
+  drawFace(now);
+  mode = sv;
+  if (ringKind == 1) { d->setDrawColor(0); d->drawBox(108, 0, 20, 14); d->setDrawColor(1); drawSmallBell(113, 2); }
+  else { d->setDrawColor(0); d->drawBox(108, 0, 20, 14); d->setDrawColor(1); drawCalendarIcon(113, 2); }
+}
+
+// ---- Liste der nächsten Einträge (Info-Folie, Status) ----
+struct PlanNext { time_t t; uint8_t kind; uint8_t idx; };
+PlanNext planNext[4];
+uint8_t  planNextCnt = 0;
+
+void refreshPlanNext() {
+  if (!planDirty && planCacheAt && since(planCacheAt) < 30000) return;
+  planDirty = false; planCacheAt = millis();
+  planNextCnt = 0;
+  if (!timeValid()) return;
+  time_t now = time(nullptr);
+  auto add = [&](time_t t, uint8_t kind, uint8_t idx) {
+    if (!t) return;
+    PlanNext p = {t, kind, idx};
+    int pos = planNextCnt;
+    while (pos > 0 && planNext[pos - 1].t > t) pos--;
+    if (pos >= 4) return;
+    for (int k = min<int>(planNextCnt, 3); k > pos; k--) planNext[k] = planNext[k - 1];
+    planNext[pos] = p;
+    if (planNextCnt < 4) planNextCnt++;
+  };
+  for (uint8_t i = 0; i < alarmCount; i++) {
+    time_t t = nextAlarmTime(alarms[i], now);
+    if (snoozeAt && snoozeIdx == i) t = snoozeAt;
+    add(t, 1, i);
+  }
+  for (uint8_t i = 0; i < eventCount; i++) add(nextEventTime(events[i], now), 2, i);
+}
+
+String nextAlarmText() {
+  if (!timeValid()) return "";
+  time_t now = time(nullptr), best = 0;
+  for (uint8_t i = 0; i < alarmCount; i++) {
+    time_t t = (snoozeAt && snoozeIdx == i) ? snoozeAt : nextAlarmTime(alarms[i], now);
+    if (t && (!best || t < best)) best = t;
+  }
+  return whenText(best, now);
+}
+
+void drawPlanSlide() {
+  refreshPlanNext();
+  if (!timeValid()) { d->setFont(u8g2_font_helvR10_tf); drawCentered("Uhrzeit fehlt", 38); return; }
+  if (!planNextCnt) {
+    d->setFont(u8g2_font_helvR08_tf);
+    drawCentered("Keine Wecker/Termine", 32);
+    drawCentered("im Dashboard eintragen", 46);
+    return;
+  }
+  time_t now = time(nullptr);
+  int y = 22;
+  for (uint8_t i = 0; i < planNextCnt && i < 3; i++, y += 13) {
+    const PlanNext& p = planNext[i];
+    if (p.kind == 1) drawSmallBell(0, y - 8); else drawCalendarIcon(0, y - 8);
+    String w = whenText(p.t, now);
+    d->setFont(u8g2_font_helvB08_tf);
+    d->drawUTF8(12, y, w.c_str());
+    int x = 12 + d->getUTF8Width(w.c_str()) + 4;
+    String l = p.kind == 1 ? String(alarms[p.idx].label) : String(events[p.idx].label);
+    if (!l.length()) l = p.kind == 1 ? "Wecker" : "Termin";
+    d->setFont(u8g2_font_helvR08_tf);
+    while (l.length() > 1 && x + d->getUTF8Width(l.c_str()) > 128) {   // kürzen
+      size_t cut = l.length() - 1;
+      while (cut > 0 && ((uint8_t)l[cut] & 0xC0) == 0x80) cut--;
+      l = l.substring(0, cut);
+    }
+    d->drawUTF8(x, y, l.c_str());
+  }
+}
+
 // =====================================================================
 //  Gesten
 // =====================================================================
 void gestureTap() {
   touchActivity();
   switch (mode) {
+    case M_ALARM:   stopRing(true); break;                     // schlummern
+    case M_EVENT:   stopRing(false); break;                    // Termin bestätigt
     case M_SLEEP: case M_OFF: wakeUp(); break;
     case M_CLOCK:   if (quietScreen) wakeUp(); break;          // Uhr bleibt bis Doppeltipp
     case M_INFO:    slideIdx = (slideIdx + 1) % slideCount; beep(2400, 15); break;
@@ -1610,6 +2247,7 @@ void gestureTap() {
 void gestureDouble() {
   touchActivity();
   switch (mode) {
+    case M_ALARM: case M_EVENT: stopRing(false); break;        // Wecker aus
     case M_SLEEP: case M_CLOCK: case M_OFF: wakeUp(); break;
     case M_INFO:  setEmotion(E_NEUTRAL, 0); beep(1800, 25); break;
     case M_PORTAL: break;
@@ -1622,6 +2260,7 @@ void gestureDouble() {
 void gestureTriple() {      // Ruhemodus umschalten
   touchActivity();
   if (mode == M_PORTAL) return;
+  if (ringing()) { stopRing(false); return; }
   bool on = !quietNow;
   quietOverride = on ? 1 : 0;
   updateQuiet();
@@ -1632,6 +2271,7 @@ void gestureTriple() {      // Ruhemodus umschalten
 void gestureLong() {
   touchActivity();
   switch (mode) {
+    case M_ALARM: case M_EVENT: stopRing(false); break;
     case M_SLEEP: case M_OFF: wakeUp(); break;
     case M_CLOCK: if (quietScreen) wakeUp(); else vibrate(40); break;   // Uhr bleibt bis Doppeltipp
     case M_INFO:  vibrate(40); break;                                   // Info bleibt bis Doppeltipp
@@ -1651,6 +2291,7 @@ void stopPortal();
 // Einmaliges Kippen = 1 Wechsel -> wird ignoriert.
 void onShake() {
   if (mode == M_PORTAL) return;
+  if (ringing()) { stopRing(mode == M_ALARM); return; }        // Schütteln = schlummern
   uint32_t now = millis();
   shakeCombo = (since(lastShake) < 5000) ? shakeCombo + 1 : 0;
   lastShake = now;
@@ -1665,7 +2306,7 @@ void onShake() {
 
 // Langsames Hin- und Herneigen -> "Uh"-Gesicht (lange weiter schaukeln -> schwindelig)
 void onRock() {
-  if (mode == M_PORTAL) return;
+  if (mode == M_PORTAL || ringing()) return;
   rockCombo = (since(lastRock) < 6000) ? rockCombo + 1 : 0;
   lastRock = millis();
   if (mode == M_FACE && (emo == E_UH || emo == E_DIZZY) && emoUntil) {   // schaukelt weiter: verlängern
@@ -2156,6 +2797,8 @@ void handleStatus() {
   j += ",\"part\":\"" + String(runningPartition()) + "\"";
   j += ",\"upd_pw\":" + String(cfg.updPw.length() ? "true" : "false");
   j += ",\"city\":\"" + jsonEsc(cfg.city) + "\"";
+  j += ",\"ringing\":\"" + String(ringKind == 1 ? "alarm" : ringKind == 2 ? "event" : "") + "\"";
+  j += ",\"next_alarm\":\"" + nextAlarmText() + "\"";
   if (timeValid()) {
     char b[24]; time_t t = time(nullptr); struct tm tm; localtime_r(&t, &tm);
     strftime(b, sizeof(b), "%d.%m.%Y %H:%M:%S", &tm);
@@ -2208,7 +2851,10 @@ void handleGetSettings() {
   j += ",\"cycle_sec\":" + String(cfg.cycleSec);
   j += ",\"emo_mask\":" + String((unsigned long)cfg.emoMask);
   j += ",\"mq_speed\":" + String(cfg.mqSpeed);
-  j += ",\"sleep_min\":" + String(cfg.sleepMin) + "}";
+  j += ",\"sleep_min\":" + String(cfg.sleepMin);
+  j += ",\"alarm_max\":" + String(cfg.alarmMax);
+  j += ",\"ev_quiet\":" + String(B(cfg.evQuiet));
+  j += ",\"sl_events\":" + String(B(cfg.slEvents)) + "}";
   sendJson(j);
 }
 
@@ -2271,6 +2917,9 @@ void handleSaveSettings() {
   if (server.hasArg("emo_mask"))    cfg.emoMask = strtoul(server.arg("emo_mask").c_str(), nullptr, 10);
   if (server.hasArg("mq_speed")) cfg.mqSpeed = constrain(server.arg("mq_speed").toInt(), 1, 10);
   if (server.hasArg("sleep_min")) cfg.sleepMin = constrain(server.arg("sleep_min").toInt(), 0, 240);
+  if (server.hasArg("alarm_max")) cfg.alarmMax = constrain(server.arg("alarm_max").toInt(), 1, 60);
+  argBool("ev_quiet", cfg.evQuiet);
+  argBool("sl_events", cfg.slEvents);
   if (server.hasArg("upd_pw")) {                          // leer = kein Passwort
     String pw = server.arg("upd_pw");
     if (pw.length() > 32) pw = pw.substring(0, 32);
@@ -2319,6 +2968,140 @@ void handleWifiSave() {
   sendJson("{\"ok\":true,\"host\":\"" + jsonEsc(cfg.host) + "\"}");
   showMsg("Gespeichert", "Neustart...", cfg.ssid, 5000);
   restartAt = millis() + 1500;
+}
+
+
+// ---- API: Wecker & Termine ----
+int argEmotion(int def) {
+  if (!server.hasArg("emo")) return def;
+  String a = server.arg("emo");
+  if (a.length() && isDigit(a[0])) { int v = a.toInt(); return v >= 0 && v < E_COUNT ? v : def; }
+  int e = parseEmotion(a);
+  return e < 0 ? def : e;
+}
+
+int argInt(const char* k, int def, int lo, int hi) {
+  if (!server.hasArg(k)) return def;
+  return constrain((int)server.arg(k).toInt(), lo, hi);
+}
+
+void handlePlans() {
+  String j; j.reserve(2600);
+  time_t now = timeValid() ? time(nullptr) : 0;
+  char b[16];
+  j += "{\"time_ok\":" + String(now ? "true" : "false");
+  j += ",\"max_alarms\":" + String(MAX_ALARMS) + ",\"max_events\":" + String(MAX_EVENTS);
+  j += ",\"ringing\":\"" + String(ringKind == 1 ? "alarm" : ringKind == 2 ? "event" : "") + "\"";
+  j += ",\"ring_label\":\"" + jsonEsc(ringLabel) + "\"";
+  j += ",\"snooze\":\"";
+  if (snoozeAt) { struct tm lt; localtime_r(&snoozeAt, &lt); snprintf(b, sizeof(b), "%02d:%02d", lt.tm_hour, lt.tm_min); j += b; }
+  j += "\",\"snooze_idx\":" + String(snoozeAt ? snoozeIdx : -1);
+  j += ",\"sounds\":[";
+  for (uint8_t i = 0; i < MELODY_COUNT; i++) { if (i) j += ","; j += "\"" + jsonEsc(MELODIES[i].name) + "\""; }
+  j += "],\"alarms\":[";
+  for (uint8_t i = 0; i < alarmCount; i++) {
+    const AlarmEntry& a = alarms[i];
+    if (i) j += ",";
+    snprintf(b, sizeof(b), "%02u:%02u", a.h, a.m);
+    time_t nt = now ? ((snoozeAt && snoozeIdx == i) ? snoozeAt : nextAlarmTime(a, now)) : 0;
+    j += "{\"i\":" + String(i) + ",\"en\":" + String(a.en ? "true" : "false") + ",\"time\":\"" + b + "\"";
+    j += ",\"days\":" + String(a.days) + ",\"emo\":\"" + EMO_NAMES[a.emo] + "\",\"snd\":" + String(a.snd);
+    j += ",\"vibe\":" + String(a.vibe ? "true" : "false") + ",\"snooze\":" + String(a.snooze);
+    j += ",\"label\":\"" + jsonEsc(a.label) + "\",\"next\":\"" + (now ? whenText(nt, now) : String("")) + "\"}";
+  }
+  j += "],\"events\":[";
+  for (uint8_t i = 0; i < eventCount; i++) {
+    const EventEntry& e = events[i];
+    if (i) j += ",";
+    char dt[12]; snprintf(dt, sizeof(dt), "%04u-%02u-%02u", e.y, e.mo, e.day);
+    snprintf(b, sizeof(b), "%02u:%02u", e.h, e.mi);
+    time_t nt = now ? nextEventTime(e, now) : 0;
+    j += "{\"i\":" + String(i) + ",\"en\":" + String(e.en ? "true" : "false") + ",\"date\":\"" + dt + "\",\"time\":\"" + b + "\"";
+    j += ",\"rep\":" + String(e.rep) + ",\"lead\":" + String(e.lead) + ",\"emo\":\"" + EMO_NAMES[e.emo] + "\"";
+    j += ",\"snd\":" + String(e.snd) + ",\"vibe\":" + String(e.vibe ? "true" : "false");
+    j += ",\"label\":\"" + jsonEsc(e.label) + "\",\"next\":\"" + (now ? whenText(nt, now) : String("")) + "\"}";
+  }
+  j += "]}";
+  sendJson(j);
+}
+
+void handleAlarmSet() {
+  int i = server.hasArg("i") ? server.arg("i").toInt() : -1;
+  if (i >= alarmCount) i = -1;
+  if (i < 0 && alarmCount >= MAX_ALARMS) { sendJson("{\"ok\":false,\"err\":\"Maximal " + String(MAX_ALARMS) + " Wecker\"}", 400); return; }
+  AlarmEntry a;
+  if (i >= 0) a = alarms[i];
+  else { memset(&a, 0, sizeof(a)); a.en = 1; a.h = 7; a.days = 0x1F; a.emo = E_CUTE; a.snd = 3; a.vibe = 1; a.snooze = 5; }
+  if (server.hasArg("time")) { uint16_t hm = parseHM(server.arg("time"), a.h * 60 + a.m); a.h = hm / 60; a.m = hm % 60; }
+  bool en = a.en; if (argBool("en", en)) a.en = en;
+  a.days = argInt("days", a.days, 0, 127);
+  a.emo = argEmotion(a.emo);
+  a.snd = argInt("snd", a.snd, 0, MELODY_COUNT - 1);
+  bool vb = a.vibe; if (argBool("vibe", vb)) a.vibe = vb;
+  a.snooze = argInt("snooze", a.snooze, 0, 30);
+  if (server.hasArg("label")) copyLabel(a.label, sizeof(a.label), server.arg("label"));
+  sanitizeAlarm(a);
+  if (i >= 0 && ringKind == 1 && ringIdx == i) stopRing(false, true);
+  if (i >= 0 && snoozeIdx == i) { snoozeAt = 0; snoozeIdx = -1; }
+  if (i < 0) i = alarmCount++;
+  alarms[i] = a;
+  savePlans();
+  sendJson("{\"ok\":true,\"i\":" + String(i) + "}");
+}
+
+void handleAlarmDel() {
+  int i = server.arg("i").toInt();
+  if (!server.hasArg("i") || i < 0 || i >= alarmCount) { sendJson("{\"ok\":false,\"err\":\"unbekannter Wecker\"}", 400); return; }
+  if (ringKind == 1) { if (ringIdx == i) stopRing(false, true); else if (ringIdx > i) ringIdx--; }
+  if (snoozeIdx == i) { snoozeAt = 0; snoozeIdx = -1; } else if (snoozeIdx > i) snoozeIdx--;
+  for (int k = i; k < alarmCount - 1; k++) alarms[k] = alarms[k + 1];
+  alarmCount--;
+  savePlans();
+  sendOk();
+}
+
+void handleEventSet() {
+  int i = server.hasArg("i") ? server.arg("i").toInt() : -1;
+  if (i >= eventCount) i = -1;
+  if (i < 0 && eventCount >= MAX_EVENTS) { sendJson("{\"ok\":false,\"err\":\"Maximal " + String(MAX_EVENTS) + " Termine\"}", 400); return; }
+  EventEntry e;
+  if (i >= 0) e = events[i];
+  else {
+    memset(&e, 0, sizeof(e)); e.en = 1; e.h = 12; e.emo = E_STAR; e.snd = 2; e.vibe = 1;
+    time_t t = time(nullptr); struct tm lt; localtime_r(&t, &lt);
+    e.y = lt.tm_year + 1900; e.mo = lt.tm_mon + 1; e.day = lt.tm_mday;
+  }
+  if (server.hasArg("date")) {                         // JJJJ-MM-TT oder TT.MM.JJJJ
+    String dt = server.arg("date"); int y = 0, mo = 0, dd = 0;
+    if (sscanf(dt.c_str(), "%d-%d-%d", &y, &mo, &dd) != 3) { if (sscanf(dt.c_str(), "%d.%d.%d", &dd, &mo, &y) != 3) y = 0; }
+    if (y < 1900 || y > 2099 || mo < 1 || mo > 12 || dd < 1 || dd > 31) { sendJson("{\"ok\":false,\"err\":\"Datum ungültig\"}", 400); return; }
+    e.y = y; e.mo = mo; e.day = dd;
+  }
+  if (server.hasArg("time")) { uint16_t hm = parseHM(server.arg("time"), e.h * 60 + e.mi); e.h = hm / 60; e.mi = hm % 60; }
+  bool en = e.en; if (argBool("en", en)) e.en = en;
+  e.rep = argInt("rep", e.rep, 0, 4);
+  e.lead = argInt("lead", e.lead, 0, 240);
+  e.emo = argEmotion(e.emo);
+  e.snd = argInt("snd", e.snd, 0, MELODY_COUNT - 1);
+  bool vb = e.vibe; if (argBool("vibe", vb)) e.vibe = vb;
+  if (server.hasArg("label")) copyLabel(e.label, sizeof(e.label), server.arg("label"));
+  sanitizeEvent(e);
+  if (i >= 0 && ringKind == 2 && ringIdx == i) stopRing(false, true);
+  if (i < 0) i = eventCount++;
+  events[i] = e;
+  savePlans();
+  sendJson("{\"ok\":true,\"i\":" + String(i) + "}");
+}
+
+void handleEventDel() {
+  int i = server.arg("i").toInt();
+  if (!server.hasArg("i") || i < 0 || i >= eventCount) { sendJson("{\"ok\":false,\"err\":\"unbekannter Termin\"}", 400); return; }
+  if (ringKind == 2) { if (ringIdx == i) stopRing(false, true); else if (ringIdx > i) ringIdx--; }
+  if (pendingEvent == i) pendingEvent = -1; else if (pendingEvent > i) pendingEvent--;
+  for (int k = i; k < eventCount - 1; k++) events[k] = events[k + 1];
+  eventCount--;
+  savePlans();
+  sendOk();
 }
 
 uint32_t argMs(uint32_t def) { return server.hasArg("ms") ? (uint32_t)server.arg("ms").toInt() : def; }
@@ -2409,6 +3192,31 @@ void setupServer() {
     if (!quietNow && quietScreen) wakeUp();
     sendJson(String("{\"ok\":true,\"quiet\":") + (quietNow ? "true" : "false") + "}");
   });
+  server.on("/api/alarms", HTTP_GET, handlePlans);
+  server.on("/api/alarm/set", handleAlarmSet);
+  server.on("/api/alarm/del", handleAlarmDel);
+  server.on("/api/event/set", handleEventSet);
+  server.on("/api/event/del", handleEventDel);
+  server.on("/api/alarm/stop",   []() { stopRing(false); sendOk(); });
+  server.on("/api/alarm/snooze", []() { stopRing(true); sendOk(); });
+  server.on("/api/alarm/test", []() {
+    int i = server.arg("i").toInt();
+    if (i < 0 || i >= alarmCount) { sendJson("{\"ok\":false,\"err\":\"unbekannter Wecker\"}", 400); return; }
+    startRing(1, i, true); sendOk();
+  });
+  server.on("/api/event/test", []() {
+    int i = server.arg("i").toInt();
+    if (i < 0 || i >= eventCount) { sendJson("{\"ok\":false,\"err\":\"unbekannter Termin\"}", 400); return; }
+    if (ringKind == 1) stopRing(false, true);
+    startRing(2, i, true); sendOk();
+  });
+  server.on("/api/sound", []() {                         // Melodie probehören: ?id=0..10, ?stop=1
+    if (ringing()) { sendJson("{\"ok\":false,\"err\":\"klingelt gerade\"}", 409); return; }
+    if (server.hasArg("stop")) { stopMelody(); sendOk(); return; }
+    int id = server.arg("id").toInt();
+    if (id < 0 || id >= MELODY_COUNT) { sendJson("{\"ok\":false,\"err\":\"unbekannter Ton\"}", 400); return; }
+    playMelody(id, 1); sendOk();
+  });
   server.on("/api/portal",  []() { sendOk(); startPortal(); });
   server.on("/api/update", HTTP_POST, handleUpdateDone, handleUpdateUpload);
   server.on("/api/restart", []() { sendOk(); restartAt = millis() + 500; });
@@ -2460,6 +3268,23 @@ void handleSerialCmd(String line) {
   else if (cmd == "clock")  { showClock(); if (arg == "demo") pcDemo(); }
   else if (cmd == "sleep")  enterSleep();
   else if (cmd == "wake")   wakeUp();
+  else if (cmd == "alarm" || cmd == "wecker") {
+    if (arg == "stop" || arg == "aus") stopRing(false);
+    else if (arg == "snooze") stopRing(true);
+    else if (arg.startsWith("test")) startRing(1, arg.substring(4).toInt(), true);
+    else {
+      time_t now = time(nullptr);
+      for (uint8_t i = 0; i < alarmCount; i++)
+        Serial.printf("W%u %s %02u:%02u Tage=%02X Ton=%u %s  next=%s\n", i, alarms[i].en ? "an " : "aus", alarms[i].h, alarms[i].m,
+                      alarms[i].days, alarms[i].snd, alarms[i].label, whenText(nextAlarmTime(alarms[i], now), now).c_str());
+      for (uint8_t i = 0; i < eventCount; i++)
+        Serial.printf("T%u %s %04u-%02u-%02u %02u:%02u %s -%umin %s  next=%s\n", i, events[i].en ? "an " : "aus", events[i].y, events[i].mo,
+                      events[i].day, events[i].h, events[i].mi, REP_NAMES[events[i].rep], events[i].lead, events[i].label,
+                      whenText(nextEventTime(events[i], now), now).c_str());
+      return;
+    }
+  }
+  else if (cmd == "sound")  { if (!ringing()) playMelody(constrain((int)arg.toInt(), 0, MELODY_COUNT - 1), 1); }
   else if (cmd == "portal") startPortal();
   else if (cmd == "restart") ESP.restart();
   else if (cmd == "status") {
@@ -2471,6 +3296,7 @@ void handleSerialCmd(String line) {
     Serial.println("Befehle: emotion <name> [ms] | text <t> | loop <t> | show <t> | speed <1-10> | notify <t>");
     Serial.println("         beep [f] | vibe [ms] | dim <1-100> | quiet on|off|auto|toggle | clock [demo]");
     Serial.println("         tap | double | long | shake | info | sleep | wake | portal | restart | status");
+    Serial.println("         alarm [stop|snooze|test <i>] | sound <0-10>");
     Serial.print("Emotionen:");
     for (int i = 0; i < E_COUNT; i++) { Serial.print(' '); Serial.print(EMO_NAMES[i]); }
     Serial.println();
@@ -2514,6 +3340,8 @@ void render(uint32_t now) {
     case M_CLOCK:   drawClockScreen(now); break;
     case M_OFF:     break;
     case M_UPDATE:  drawUpdate(); break;
+    case M_ALARM:
+    case M_EVENT:   drawRing(now); break;
   }
   // Fortschrittsbalken beim Halten für das Setup-Portal
   if (tState && since(tPressAt) > 1500 && !setupFired) {
@@ -2560,6 +3388,7 @@ void setup() {
   if (PIN_BUZZER >= 0) { pinMode(PIN_BUZZER, OUTPUT); digitalWrite(PIN_BUZZER, LOW); }
 
   loadSettings();
+  loadPlans();
   randomSeed(esp_random());
   initDisplay();
   bootAnimation();
@@ -2597,6 +3426,7 @@ void loop() {
   pollTilt();
   pollSerial();
   soundLoop();
+  melodyLoop();
   vibeLoop();
   displayHealth();
 
@@ -2639,7 +3469,10 @@ void loop() {
       break;
     default: break;
   }
+  planLoop();
+  ringLoop(now);
   if (mode == M_FACE || mode == M_SLEEP) updateFace(now);
+  else if (mode == M_ALARM || mode == M_EVENT) { Mode sv = mode; mode = M_FACE; updateFace(now); mode = sv; }
   updateBrightness();
 
   static uint32_t lastFrame = 0;

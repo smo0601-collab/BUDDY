@@ -5,8 +5,8 @@
 </p>
 
 **PCBuddy** ist ein kleiner Schreibtisch-Begleiter mit animierten OLED-Augen. Er reagiert auf Berührung, Schütteln und
-Schaukeln, zeigt Uhrzeit (im Pac-Man-Stil), Wetter und Nachrichten und lässt sich komplett über eine Web-Oberfläche im
-Heimnetz steuern. Auch Firmware-Updates gehen per WLAN.
+Schaukeln, zeigt Uhrzeit (im Pac-Man-Stil), Wetter und Nachrichten, weckt dich und erinnert an Termine und lässt sich
+komplett über eine Web-Oberfläche im Heimnetz steuern. Auch Firmware-Updates gehen per WLAN.
 
 - **Board:** ESP32-C3 SuperMini
 - **Display:** 0,96" OLED SSD1306 **oder** 1,3" OLED SH1106 (128×64, I²C), umschaltbar ohne neu zu kompilieren
@@ -41,7 +41,9 @@ Heimnetz steuern. Auch Firmware-Updates gehen per WLAN.
 | **Touch** | Tippen, Doppeltipp, 3× Tippen, langes Drücken (TTP223) |
 | **Bewegung** | Schütteln macht ihn wütend, langsames Schaukeln gibt ein „Uh“-Gesicht, lange schaukeln macht ihn schwindelig |
 | **Pac-Man-Uhr** | Ziffern aus Pellets. Pac-Man frisst kurz vor jedem Minutenwechsel genau die Ziffer, die sich ändert. |
-| **Info-Folien** | Wetter (Open-Meteo, ohne API-Key), Uhr, WLAN, IP-Adresse, Firmware |
+| **Wecker** | bis zu 8 Wecker mit Wochentagen, eigenem Gesicht, eigener Melodie, Vibration und Schlummern. Klingelt auch im Ruhemodus. |
+| **Termine** | bis zu 20 Termine, einmalig oder täglich/wöchentlich/monatlich/jährlich (Geburtstage), Erinnerung vorher, eigenes Gesicht und eigene Melodie |
+| **Info-Folien** | Wetter (Open-Meteo, ohne API-Key), Uhr, nächste Wecker & Termine, WLAN, IP-Adresse, Firmware |
 | **Text** | Lauftext (Geschwindigkeit 1–10) oder stehender Text, mit Umlauten, ß, €, ° |
 | **Ruhemodus** | nach Zeitplan oder per 3× Tippen: gedimmt, ohne Ton, mit Schlafgesicht, Uhr oder Display aus |
 | **Web-Dashboard** | alles einstellbar im Browser, in Tabs aufgeteilt, fürs Handy optimiert |
@@ -61,6 +63,14 @@ Heimnetz steuern. Auch Firmware-Updates gehen per WLAN.
 Pac-Man läuft mit dem Geist auf einem Rundkurs über und unter den Ziffern, ohne sie zu berühren. **Erst 1–3 Sekunden vor
 dem Minutenwechsel** geht er in die Ziffern, die sich gleich ändern, und frisst sie. **Genau zur vollen Minute** erscheint
 die neue Zahl. Optional gibt es dazu „Waka-Waka“, aber nur zur vollen Stunde.
+
+### Wecker & Termine
+<img src="docs/img/wecker.gif" alt="Wecker klingelt: Glocke mit Uhrzeit im Wechsel mit dem gewählten Gesicht" width="430">
+
+<img src="docs/img/wecker-termine.png" alt="Weckeranzeige, Gesicht, Termin-Erinnerung und Info-Folie" width="640">
+
+Beim Klingeln wechselt das Display zwischen der Weckeranzeige (Uhrzeit und Name) und dem Gesicht, das du für diesen
+Wecker oder Termin ausgesucht hast, dazu läuft die gewählte Melodie.
 
 ### Alle 21 Emotionen
 <img src="docs/img/emotions.png" alt="Alle 21 Emotionen" width="640">
@@ -193,6 +203,27 @@ Später lässt sich das Setup jederzeit wieder öffnen: **5 Sekunden auf den Tou
 
 Info-Folien und Uhr **bleiben offen, bis du doppelt tippst**.
 
+**Wenn ein Wecker klingelt:** **Tippen** oder **Schütteln** = schlummern, **2× tippen** oder **lang drücken** = aus.
+Bei einer **Termin-Erinnerung** reicht einmal Tippen.
+
+### Wecker & Termine
+
+Angelegt werden sie im Dashboard unter **Wecker & Termine**:
+
+- **Wecker:** Uhrzeit, Name, Wochentage (Schnellwahl Mo–Fr, Wochenende, täglich oder *einmalig*), Gesicht, Melodie,
+  Schlummerzeit (aus, 5, 10, 15 min) und Vibration. Ein einmaliger Wecker schaltet sich nach dem Klingeln selbst aus.
+- **Termine:** Name, Datum, Uhrzeit, Wiederholung (einmalig, täglich, wöchentlich, monatlich, jährlich), Erinnerung
+  (zur Uhrzeit oder 5 min bis 4 h vorher), Gesicht, Melodie und Vibration. Für Geburtstage einfach *jährlich* wählen,
+  das Geburtsjahr darf als Datum drinstehen.
+- **10 Melodien** zum Probehören (▶): Piep, Doppelpiep, Klassischer Wecker, Gong, Fanfare, Fröhlich, Sanft, Arcade,
+  Happy Birthday, Für Elise.
+- Mit **Testen** lässt sich jeder Eintrag sofort ausprobieren.
+
+Wecker klingeln **auch im Ruhemodus** und machen das Display dafür hell. Nach dem Ausschalten sagt PCBuddy
+„Guten Morgen!“ und zeigt das Wetter. Ohne Reaktion hört er nach der eingestellten Klingeldauer (Standard 10 min) auf.
+Termine zeigt er im Ruhemodus nur an, ohne Ton, außer du schaltest *Termine im Ruhemodus mit Ton* ein.
+Wecker und Termine brauchen die Uhrzeit aus dem Internet (NTP); sie bleiben bei Updates und Neustarts erhalten.
+
 ### Emotionen
 
 `neutral` · `cute` · `laugh` · `love` · `heartbeat` · `anime_love` · `mini_love` · `kissou` · `star` · `surprised` ·
@@ -227,6 +258,7 @@ Im Browser unter **http://pcbuddy.local**. Die Oberfläche läuft komplett auf d
 | **Start** | Status, Helligkeit (live), Ruhemodus, Schnellzugriff, Schnell-Text |
 | **Gesicht** | alle Emotionen, automatischer Wechsel, Gesten simulieren, Aktionen |
 | **Text** | Lauftext oder stehender Text, Geschwindigkeit, Benachrichtigung mit Ton |
+| **Wecker & Termine** | Wecker und Termine anlegen, bearbeiten, ein-/ausschalten, testen; Melodien probehören; Klingeldauer |
 | **Anzeige** | Display-Typ, Helligkeit, Drehen, Info-Folien, Ton, Sensoren, Live-Sensor-Test |
 | **Ruhemodus** | Zeitplan, Helligkeit, Anzeige, Ton/Vibration |
 | **Ort & Zeit** | Ortssuche fürs Wetter, Zeitzone, Gerätename |
@@ -235,6 +267,15 @@ Im Browser unter **http://pcbuddy.local**. Die Oberfläche läuft komplett auf d
 
 Geänderte Einstellungen erkennt das Dashboard selbst und blendet eine *Speichern*-Leiste ein. Jeder Tab hat eine eigene
 Adresse, z. B. `http://pcbuddy.local/#text`.
+
+<img src="docs/img/dashboard-wecker.png" alt="Dashboard – Wecker & Termine" width="760">
+
+<p>
+<img src="docs/img/dashboard-wecker-edit.png" alt="Wecker bearbeiten" width="500">
+<img src="docs/img/dashboard-termin-mobil.png" alt="Termin bearbeiten auf dem Handy" width="230">
+</p>
+
+Klingelt gerade ein Wecker, erscheint oben auf jeder Seite eine Leiste mit *Schlummern* und *Ausschalten*.
 
 <img src="docs/img/dashboard-gesicht.png" alt="Dashboard – Gesicht" width="760">
 
@@ -267,6 +308,7 @@ curl "http://pcbuddy.local/api/emotion?name=heartbeat&ms=5000"
 curl "http://pcbuddy.local/api/notify?text=Build%20fertig"
 curl "http://pcbuddy.local/api/text?mode=static&text=Bin%20gleich%20zur%C3%BCck"
 curl "http://pcbuddy.local/api/quiet?state=on"
+curl "http://pcbuddy.local/api/alarm/set?time=06:45&days=31&label=Aufstehen&snd=7"
 ```
 
 ```powershell
@@ -291,6 +333,7 @@ Invoke-RestMethod "http://pcbuddy.local/api/notify?text=Kaffee%20ist%20fertig"
 | 1,3"-Display geht beim Piepen aus | Die Firmware stellt es automatisch wieder her. Dauerhaft besser: 100 Ω vor den Buzzer, Kondensator ans Display, Display an 5V. |
 | Neigungssensor reagiert falsch | *Anzeige → Sensor-Test (live)* ansehen. SW-520D senkrecht einbauen, Empfindlichkeit anpassen. |
 | Keine serielle Ausgabe | **USB CDC On Boot: Enabled** einstellen |
+| Wecker klingelt nicht | Im Dashboard unter *Wecker & Termine* prüfen, ob „nächster: …“ angezeigt wird. Steht oben ein Hinweis zur Uhrzeit, fehlt die Internet-Zeit (NTP). Mit *Testen* Ton und Gesicht prüfen. |
 
 **WLAN-Wächter:** PCBuddy verbindet sich nach Abbrüchen selbst neu. Jeder 4. Versuch setzt den WLAN-Treiber zurück, eine
 „tote“ Verbindung erkennt er per DNS-Test. Nach 20 Minuten ganz ohne Verbindung startet er neu.
@@ -308,19 +351,19 @@ BUDDY/
 ├── docs/
 │   ├── API.md               alle HTTP- und Seriell-Befehle
 │   └── img/                 Bilder, Animationen, Schaltplan
-├── firmware/                fertige Update-Datei (.bin) für das Update per WLAN
+├── firmware/                fertige Firmware: Komplett-Datei (USB) und Update-Datei (WLAN)
 ├── CHANGELOG.md             Versionsgeschichte
 └── LICENSE
 ```
 
 Der Code ist in Abschnitte gegliedert (Einstellungen, Ton, Display, Gesicht, Wetter, Pac-Man-Uhr, Info-Folien, Text,
-Gesten, Sensoren, WLAN, Update, Web-Server, Seriell). Jeder Abschnitt ist auf Deutsch kommentiert.
+Gesten, Sensoren, Wecker & Termine, WLAN, Update, Web-Server, Seriell). Jeder Abschnitt ist auf Deutsch kommentiert.
 
 ---
 
 ## Änderungen
 
-Siehe [**CHANGELOG.md**](CHANGELOG.md). Aktuelle Version: **v1.6.4**.
+Siehe [**CHANGELOG.md**](CHANGELOG.md). Aktuelle Version: **v1.7.0**.
 
 ## Lizenz
 
