@@ -118,7 +118,7 @@ scan();
 .pl .tm{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;min-width:66px;line-height:1.1}.pl .tm small{display:block;font-size:11.5px;font-weight:500;color:var(--mut)}
 .pl .tx{flex:1;min-width:0;cursor:pointer}.pl .tx b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
 .pl .tx small{display:block;color:var(--mut);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pl.off .tm,.pl.off .tx{opacity:.45}
-.tg.sw{border:0;padding:0}.empty{color:var(--mut);font-size:13px;padding:10px 0}
+.tg.sw{border:0;padding:0}.pl .tb{padding:6px 9px;font-size:12px;flex:none}@media(max-width:520px){.pl .tb span{display:none}.pl .tb{padding:7px 10px}.pl{gap:9px}}.empty{color:var(--mut);font-size:13px;padding:10px 0}
 .days{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}.days .btn{padding:9px 0}
 .quick{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}.quick .chip{margin:0}
 .modal{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.6);display:none;align-items:flex-start;justify-content:center;padding:28px 12px;overflow-y:auto}
@@ -139,7 +139,7 @@ const char DASH_HTML[] PROGMEM = R"HTML(<!doctype html><html lang="de"><head><me
 <button class="tab" data-t="disp">Anzeige</button><button class="tab" data-t="quiet">Ruhemodus</button><button class="tab" data-t="place">Ort &amp; Zeit</button>
 <button class="tab" data-t="wifi">WLAN</button><button class="tab" data-t="sys">System</button></div></nav>
 <div class="wrap">
-<div class="card" id="ringBar"><b id="ringTxt">⏰ Wecker klingelt</b><button class="btn" id="ringSn" onclick="ringAct('snooze')">Schlummern</button><button class="btn pri" onclick="ringAct('stop')">Ausschalten</button></div>
+<div class="card" id="ringBar"><b id="ringTxt">⏰ Wecker klingelt</b><button class="btn" id="ringSn" onclick="ringAct('snooze')">Schlummern</button><button class="btn pri" id="ringOff" onclick="ringAct('stop')">Ausschalten</button></div>
 
 <!-- ============ START ============ -->
 <section class="panel" data-p="start">
@@ -204,7 +204,8 @@ const char DASH_HTML[] PROGMEM = R"HTML(<!doctype html><html lang="de"><head><me
 <p class="hint">Klingelt auch im Ruhemodus, das Display wird dafür hell. Am Gerät: <b>tippen</b> oder <b>schütteln</b> = schlummern, <b>2× tippen</b> oder <b>lang drücken</b> = aus.</p></div>
 <div class="card"><h2>Termine</h2><div id="evList"></div>
 <div class="flex" style="margin-top:10px"><button class="btn pri" id="evAdd" onclick="evEdit(-1)">+ Termin</button><span class="hint" id="evCnt"></span></div>
-<p class="hint">Zur Erinnerung zeigt PCBuddy dein Gesicht und den Termin und spielt die Melodie 3×. Tippen = gesehen.</p></div>
+<p class="hint">Zur Erinnerung zeigt PCBuddy dein Gesicht und den Termin und spielt die Melodie 3×. Tippen = gesehen.</p>
+<p class="hint"><b>▶ Test</b> löst einen Eintrag sofort aus. Im Editor testet <b>Testen</b> die gerade eingestellten Werte, auch vor dem Speichern. Ein Test endet nach 30 s von selbst.</p></div>
 <div class="card wide"><h2>Einstellungen</h2><div class="row"><div>
 <label style="margin-top:0">Wecker klingelt höchstens</label><select id="alMax" onchange="plSet('alarm_max',this.value)"><option value="1">1 Minute</option><option value="3">3 Minuten</option><option value="5">5 Minuten</option><option value="10">10 Minuten</option><option value="15">15 Minuten</option><option value="20">20 Minuten</option><option value="30">30 Minuten</option><option value="60">60 Minuten</option></select></div><div>
 <label class="tg" style="margin-top:14px"><span>Termine im Ruhemodus mit Ton<small>Sonst nur Anzeige (Wecker klingeln immer)</small></span><input type="checkbox" id="evQuiet" onchange="plSet('ev_quiet',this.checked?1:0)"></label></div></div>
@@ -371,16 +372,16 @@ const emoName=k=>{const e=EMO.find(x=>x[0]===k);return e?e[1]+' '+e[2]:k};
 function daysText(d){if(!d)return'einmalig';if(d===127)return'täglich';if(d===31)return'Mo–Fr';if(d===96)return'Sa + So';return DAYS.filter((x,i)=>d>>i&1).join(', ')}
 function leadText(v){const o=$('#e_lead').querySelector('[value="'+v+'"]');return o?o.textContent:v+' min vorher'}
 function fmtDate(s){const p=s.split('-');return p[2]+'.'+p[1]+'.'+p[0]}
-function plRow(on,tm,sub,title,info,click,tog){const r=document.createElement('div');r.className='pl'+(on?'':' off');
- r.innerHTML='<div class="tm">'+tm+(sub?'<small>'+sub+'</small>':'')+'</div><div class="tx"><b>'+esc(title)+'</b>'+info.map(x=>'<small>'+x+'</small>').join('')+'</div><label class="tg sw"><input type="checkbox"'+(on?' checked':'')+'></label>';
- r.querySelector('.tx').onclick=click;r.querySelector('input').onchange=e=>tog(e.target.checked);return r}
+function plRow(on,tm,sub,title,info,click,tog,test){const r=document.createElement('div');r.className='pl'+(on?'':' off');
+ r.innerHTML='<div class="tm">'+tm+(sub?'<small>'+sub+'</small>':'')+'</div><div class="tx"><b>'+esc(title)+'</b>'+info.map(x=>'<small>'+x+'</small>').join('')+'</div><button class="btn tb" type="button" title="Jetzt testen">▶<span> Test</span></button><label class="tg sw"><input type="checkbox"'+(on?' checked':'')+'></label>';
+ r.querySelector('.tb').onclick=test;r.querySelector('.tx').onclick=click;r.querySelector('input').onchange=e=>tog(e.target.checked);return r}
 function plRender(){const al=$('#alList'),ev=$('#evList');al.innerHTML='';ev.innerHTML='';
  PL.alarms.forEach(a=>{const sn=PL.snooze&&PL.snooze_idx===a.i;
   al.appendChild(plRow(a.en,a.time,'',a.label||'Wecker',[esc(daysText(a.days))+' · '+esc(PL.sounds[a.snd]),sn?'⏸ schlummert bis '+PL.snooze:(a.en?(a.next?'nächster: '+esc(a.next):''):'aus')],
-   ()=>alEdit(a.i),v=>plQuick('alarm',a.i,v)))});
+   ()=>alEdit(a.i),v=>plQuick('alarm',a.i,v),()=>plTestRow('alarm',a.i)))});
  PL.events.forEach(e=>{const past=e.en&&!e.next;
   ev.appendChild(plRow(e.en&&!past,e.time,fmtDate(e.date).slice(0,6),e.label||'Termin',[REP[e.rep]+(e.lead?' · '+leadText(e.lead):''),e.en?(past?'vorbei':'nächster: '+esc(e.next)):'aus'],
-   ()=>evEdit(e.i),v=>plQuick('event',e.i,v)))});
+   ()=>evEdit(e.i),v=>plQuick('event',e.i,v),()=>plTestRow('event',e.i)))});
  if(!PL.alarms.length)al.innerHTML='<div class="empty">Noch kein Wecker.</div>';
  if(!PL.events.length)ev.innerHTML='<div class="empty">Noch keine Termine.</div>';
  $('#alCnt').textContent=PL.alarms.length+' / '+PL.max_alarms;$('#evCnt').textContent=PL.events.length+' / '+PL.max_events;
@@ -399,21 +400,29 @@ function dlgClose(){$$('.modal').forEach(m=>m.classList.remove('open'));sndStop(
 function alEdit(i){emoFill('a_emo');edI=i;const a=i>=0?PL.alarms.find(x=>x.i===i):{time:'07:00',label:'',days:31,emo:'cute',snd:3,snooze:5,vibe:true,en:true};
  $('#alTitle').textContent=i>=0?'Wecker bearbeiten':'Neuer Wecker';$('#a_time').value=a.time;$('#a_label').value=a.label;edDays=a.days;dayBtns();
  $('#a_emo').value=a.emo;$('#a_snd').value=a.snd;$('#a_snooze').value=a.snooze;$('#a_vibe').checked=a.vibe;$('#a_en').checked=a.en;
- $('#a_del').style.display=$('#a_test').style.display=i>=0?'':'none';$('#alDlg').classList.add('open');$('#a_time').focus()}
+ $('#a_del').style.display=i>=0?'':'none';$('#alDlg').classList.add('open');$('#a_time').focus()}
 function evEdit(i){emoFill('e_emo');edI=i;const n=new Date(),dd=n.getFullYear()+'-'+String(n.getMonth()+1).padStart(2,'0')+'-'+String(n.getDate()).padStart(2,'0');
  const e=i>=0?PL.events.find(x=>x.i===i):{label:'',date:dd,time:'12:00',rep:0,lead:15,emo:'star',snd:2,vibe:true,en:true};
  $('#evTitle').textContent=i>=0?'Termin bearbeiten':'Neuer Termin';$('#e_label').value=e.label;$('#e_date').value=e.date;$('#e_time').value=e.time;
  $('#e_rep').value=e.rep;$('#e_lead').value=e.lead;$('#e_emo').value=e.emo;$('#e_snd').value=e.snd;$('#e_vibe').checked=e.vibe;$('#e_en').checked=e.en;
- $('#e_del').style.display=$('#e_test').style.display=i>=0?'':'none';$('#evDlg').classList.add('open');$('#e_label').focus()}
+ $('#e_del').style.display=i>=0?'':'none';$('#evDlg').classList.add('open');$('#e_label').focus()}
+const alForm=()=>({i:edI,time:$('#a_time').value,label:$('#a_label').value.trim(),days:edDays,emo:$('#a_emo').value,snd:$('#a_snd').value,snooze:$('#a_snooze').value,vibe:$('#a_vibe').checked?1:0,en:$('#a_en').checked?1:0});
+const evForm=()=>({i:edI,label:$('#e_label').value.trim(),date:$('#e_date').value,time:$('#e_time').value,rep:$('#e_rep').value,lead:$('#e_lead').value,emo:$('#e_emo').value,snd:$('#e_snd').value,vibe:$('#e_vibe').checked?1:0,en:$('#e_en').checked?1:0});
 async function alSave(){if(!$('#a_time').value){toast('Bitte Uhrzeit eingeben',1);return}
- const j=await plPost('/api/alarm/set',{i:edI,time:$('#a_time').value,label:$('#a_label').value.trim(),days:edDays,emo:$('#a_emo').value,snd:$('#a_snd').value,snooze:$('#a_snooze').value,vibe:$('#a_vibe').checked?1:0,en:$('#a_en').checked?1:0});
+ const j=await plPost('/api/alarm/set',alForm());
  if(j.ok){dlgClose();toast('Wecker gespeichert');await plLoad();poll()}}
 async function evSave(){if(!$('#e_date').value||!$('#e_time').value){toast('Bitte Datum und Uhrzeit eingeben',1);return}
- const j=await plPost('/api/event/set',{i:edI,label:$('#e_label').value.trim(),date:$('#e_date').value,time:$('#e_time').value,rep:$('#e_rep').value,lead:$('#e_lead').value,emo:$('#e_emo').value,snd:$('#e_snd').value,vibe:$('#e_vibe').checked?1:0,en:$('#e_en').checked?1:0});
+ const j=await plPost('/api/event/set',evForm());
  if(j.ok){dlgClose();toast('Termin gespeichert');await plLoad();poll()}}
 async function alDel(){if(!confirm('Wecker löschen?'))return;const j=await plPost('/api/alarm/del',{i:edI});if(j.ok){dlgClose();toast('Gelöscht');plLoad();poll()}}
 async function evDel(){if(!confirm('Termin löschen?'))return;const j=await plPost('/api/event/del',{i:edI});if(j.ok){dlgClose();toast('Gelöscht');plLoad();poll()}}
-async function plTest(k){dlgClose();const j=await plPost('/api/'+k+'/test',{i:edI});if(j.ok)toast('Test läuft – am Gerät tippen zum Beenden');poll()}
+// Testen im Editor: mit den gerade eingestellten Werten, ohne zu speichern (Editor bleibt offen)
+let testOn=false;
+function testBtns(){$$('#a_test,#e_test').forEach(b=>{b.textContent=testOn?'■ Test beenden':'Testen';b.classList.toggle('on',testOn)})}
+async function plTest(k){if(testOn){await ringAct('stop');testOn=false;testBtns();return}
+ const p=k==='alarm'?alForm():evForm();if(p.i<0)delete p.i;sndStop(1);
+ const j=await plPost('/api/'+k+'/test',p);if(j.ok){testOn=true;testBtns();toast('Test läuft: am Gerät tippen oder „Test beenden“');setTimeout(poll,300)}}
+async function plTestRow(k,i){const j=await plPost('/api/'+k+'/test',{i});if(j.ok){toast('Test läuft: am Gerät tippen oder oben „Test beenden“');setTimeout(poll,300)}}
 function sndPlay(id){fetch('/api/sound?id='+$('#'+id).value,{method:'POST'}).then(r=>r.json()).then(j=>{if(!j.ok)toast(j.err||'Fehler',1)}).catch(()=>toast('Keine Verbindung',1))}
 function sndStop(q){fetch('/api/sound?stop=1',{method:'POST'}).catch(()=>{})}
 async function plSet(k,v){const j=await plPost('/api/settings',{[k]:v});if(j.ok)toast('Gespeichert')}
@@ -458,8 +467,10 @@ async function poll(){try{const s=await (await fetch('/api/status',{cache:'no-st
  if(document.activeElement!==$('#liveBr')){$('#liveBr').value=s.bright;lbV.textContent=s.bright+' %'}
  $('#brHint').textContent=s.quiet?'Ruhemodus aktiv – der Regler ändert die Ruhemodus-Helligkeit.':'Der Regler ändert die normale Helligkeit und wirkt sofort.';
  $('#s_al').textContent=s.next_alarm||'keiner';
- const rb=$('#ringBar');rb.classList.toggle('open',!!s.ringing);if(s.ringing){$('#ringTxt').textContent=(s.ringing==='alarm'?'⏰ Wecker klingelt':'📅 Termin-Erinnerung')+(PL.ring_label?': '+PL.ring_label:'');$('#ringSn').style.display=s.ringing==='alarm'?'':'none'}
- if(s.ringing!==lastRing){lastRing=s.ringing;plLoad()}else if(curTab()==='plan'&&!document.querySelector('.modal.open'))plLoad();
+ {const t=!!(s.ringing&&s.ring_test);if(t!==testOn){testOn=t;testBtns()}}
+ const rb=$('#ringBar');rb.classList.toggle('open',!!s.ringing);if(s.ringing){const t=!!s.ring_test;$('#ringTxt').textContent=(t?'Test · ':'')+(s.ringing==='alarm'?'⏰ Wecker klingelt':'📅 Termin-Erinnerung')+(PL.ring_label?': '+PL.ring_label:'');
+  $('#ringSn').style.display=s.ringing==='alarm'&&!t?'':'none';$('#ringOff').textContent=t?'Test beenden':'Ausschalten'}
+ if(s.ringing!==lastRing){lastRing=s.ringing;plLoad().then(()=>{if(s.ringing)poll()})}else if(curTab()==='plan'&&!document.querySelector('.modal.open'))plLoad();
  cyCur=s.cycle||0;$('#s_cy').textContent=CY_NAMES[cyCur]||'–';$('#qcy').classList.toggle('on',cyCur===1);
  $('#s_wifi').textContent=s.ssid?(s.ssid+' ('+s.rssi+' dBm)'):'nicht verbunden';$('#s_up').textContent=up(s.uptime);
  $('#w_ssid').textContent=s.ssid||'–';$('#w_rssi').textContent=s.ssid?s.rssi+' dBm':'–';$('#w_ip').textContent=s.ip;

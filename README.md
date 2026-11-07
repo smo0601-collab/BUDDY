@@ -217,7 +217,9 @@ Angelegt werden sie im Dashboard unter **Wecker & Termine**:
   das Geburtsjahr darf als Datum drinstehen.
 - **10 Melodien** zum Probehören (▶): Piep, Doppelpiep, Klassischer Wecker, Gong, Fanfare, Fröhlich, Sanft, Arcade,
   Happy Birthday, Für Elise.
-- Mit **Testen** lässt sich jeder Eintrag sofort ausprobieren.
+- **Testen:** Jeder Eintrag in der Liste hat einen **▶ Test**-Knopf, der ihn sofort auslöst. Im Editor probiert
+  **Testen** die gerade eingestellten Werte aus, auch bevor du speicherst. Auf dem Display steht dabei „TEST“.
+  Ein Test ändert nichts, endet mit Tippen, mit „Test beenden“ oder nach 30 s von selbst.
 
 Wecker klingeln **auch im Ruhemodus** und machen das Display dafür hell. Nach dem Ausschalten sagt PCBuddy
 „Guten Morgen!“ und zeigt das Wetter. Ohne Reaktion hört er nach der eingestellten Klingeldauer (Standard 10 min) auf.
@@ -363,7 +365,7 @@ Gesten, Sensoren, Wecker & Termine, WLAN, Update, Web-Server, Seriell). Jeder Ab
 
 ## Änderungen
 
-Siehe [**CHANGELOG.md**](CHANGELOG.md). Aktuelle Version: **v1.7.0**.
+Siehe [**CHANGELOG.md**](CHANGELOG.md). Aktuelle Version: **v1.7.1**.
 
 ## Lizenz
 

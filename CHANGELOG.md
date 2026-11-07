@@ -2,6 +2,16 @@
 
 Alle Versionen von PCBuddy. Die neueste steht oben.
 
+## v1.7.1
+
+- **Test-Funktion für Wecker und Termine** ausgebaut: In der Liste hat jeder Eintrag einen **▶ Test**-Knopf.
+  Im Editor testet **Testen** die gerade eingestellten Werte (Uhrzeit, Name, Gesicht, Melodie …), auch für neue,
+  noch nicht gespeicherte Einträge, ohne etwas zu speichern. Während des Tests wird der Knopf zu „Test beenden“.
+- Auf dem Display steht beim Test „TEST“ bzw. „Termin (Test)“; der Termin-Test zeigt die echte Erinnerung (z. B. „in 30 min · 15:00“).
+- Ein Test endet nach 30 s von selbst und ändert nichts am gespeicherten Eintrag (einmalige Wecker bleiben an, kein Schlummern).
+- API: `/api/alarm/test` und `/api/event/test` nehmen dieselben Felder wie `…/set`; ohne `i` wird ein neuer Eintrag getestet.
+  `ring_test` in `/api/status`. Seriell: `alarm event <i>` testet einen Termin.
+
 ## v1.7.0
 
 - **Wecker** (bis zu 8): Uhrzeit, Wochentage (oder einmalig), Name, eigenes Gesicht, eigene Melodie, Vibration, Schlummern (5/10/15 min).

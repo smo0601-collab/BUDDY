@@ -208,8 +208,10 @@ uint32_t pcWaitSince = 0;
 String   serBuf;
 
 // ---- Wecker & Termine ----
-AlarmEntry alarms[MAX_ALARMS];
-EventEntry events[MAX_EVENTS];
+AlarmEntry alarms[MAX_ALARMS + 1];   // letzter Platz = Probelauf aus dem Editor (wird nicht gespeichert)
+EventEntry events[MAX_EVENTS + 1];
+#define TEST_ALARM MAX_ALARMS
+#define TEST_EVENT MAX_EVENTS
 uint8_t  alarmCount = 0, eventCount = 0;
 uint8_t  ringKind = 0;              // 0 nichts, 1 Wecker, 2 Termin
 int8_t   ringIdx = -1;
@@ -1887,12 +1889,12 @@ void loadPlans() {
   alarmCount = eventCount = 0;
   if (prefs.getUChar("plVer", 0) == 1) {
     size_t n = prefs.getBytesLength("alarms");
-    if (n && n % sizeof(AlarmEntry) == 0 && n <= sizeof(alarms)) {
+    if (n && n % sizeof(AlarmEntry) == 0 && n <= MAX_ALARMS * sizeof(AlarmEntry)) {
       prefs.getBytes("alarms", alarms, n);
       alarmCount = n / sizeof(AlarmEntry);
     }
     n = prefs.getBytesLength("events");
-    if (n && n % sizeof(EventEntry) == 0 && n <= sizeof(events)) {
+    if (n && n % sizeof(EventEntry) == 0 && n <= MAX_EVENTS * sizeof(EventEntry)) {
       prefs.getBytes("events", events, n);
       eventCount = n / sizeof(EventEntry);
     }
@@ -1935,8 +1937,8 @@ void prepareRingText() {
 // kind 1 = Wecker, 2 = Termin
 void startRing(uint8_t kind, int8_t idx, bool test) {
   if (mode == M_UPDATE) return;
-  if (kind == 1 && (idx < 0 || idx >= alarmCount)) return;
-  if (kind == 2 && (idx < 0 || idx >= eventCount)) return;
+  if (kind == 1 && !(idx >= 0 && (idx < alarmCount || (test && idx == TEST_ALARM)))) return;
+  if (kind == 2 && !(idx >= 0 && (idx < eventCount || (test && idx == TEST_EVENT)))) return;
   if (ringKind == 1 && kind == 2) { pendingEvent = idx; return; }   // Wecker hat Vorrang
   if (!ringing()) {
     ringWasQuiet = quietScreen || mode == M_SLEEP || mode == M_OFF;
@@ -1959,7 +1961,7 @@ void startRing(uint8_t kind, int8_t idx, bool test) {
     bool quietBlock = quietNow && !cfg.evQuiet;
     ringSound = !(quietBlock && cfg.quietMute);
     ringVibe = e.vibe && !(quietBlock && cfg.quietNoVibe);
-    if (e.lead == 0 || test) snprintf(ringWhen, sizeof(ringWhen), "jetzt · %02u:%02u", e.h, e.mi);
+    if (e.lead == 0) snprintf(ringWhen, sizeof(ringWhen), "jetzt · %02u:%02u", e.h, e.mi);
     else if (e.lead >= 60 && e.lead % 60 == 0) snprintf(ringWhen, sizeof(ringWhen), "in %u h · %02u:%02u", e.lead / 60, e.h, e.mi);
     else snprintf(ringWhen, sizeof(ringWhen), "in %u min · %02u:%02u", e.lead, e.h, e.mi);
   }
@@ -2062,10 +2064,10 @@ void ringLoop(uint32_t now) {
   uint32_t el = since(ringStart);
   if (ringKind == 1) {
     if (ringVibe && (!ringLastVibe || since(ringLastVibe) >= 2000)) { ringLastVibe = now; vibeRaw(500); }
-    if (el > cfg.alarmMax * 60000UL) { Serial.println("[Wecker] automatisch aus"); stopRing(false); }
+    if (el > (ringTest ? 30000UL : cfg.alarmMax * 60000UL)) { Serial.println("[Wecker] automatisch aus"); stopRing(false); }
   } else {
     if (ringVibe && el < 2000 && (!ringLastVibe || since(ringLastVibe) >= 700)) { ringLastVibe = now; vibeRaw(250); }
-    if (el > 180000UL) stopRing(false);
+    if (el > (ringTest ? 30000UL : 180000UL)) stopRing(false);
   }
 }
 
@@ -2119,11 +2121,11 @@ void drawRingCard(uint32_t now) {
     drawCentered(l.c_str(), 50);
     d->setFont(u8g2_font_5x7_tf);
     bool sn = alarms[ringIdx].snooze && !ringTest;
-    drawCentered(sn ? "Tippen=Schlummern 2x=Aus" : "Tippen = Aus", 63);
+    drawCentered(ringTest ? "TEST - Tippen = Ende" : sn ? "Tippen=Schlummern 2x=Aus" : "Tippen = Aus", 63);
   } else {
     drawCalendarIcon(0, 0);
     d->setFont(u8g2_font_helvB08_tf);
-    d->drawUTF8(12, 8, "Termin");
+    d->drawUTF8(12, 8, ringTest ? "Termin (Test)" : "Termin");
     if (timeValid()) {
       snprintf(b, sizeof(b), "%02d:%02d", lt.tm_hour, lt.tm_min);
       d->setFont(u8g2_font_helvR08_tf);
@@ -2798,6 +2800,7 @@ void handleStatus() {
   j += ",\"upd_pw\":" + String(cfg.updPw.length() ? "true" : "false");
   j += ",\"city\":\"" + jsonEsc(cfg.city) + "\"";
   j += ",\"ringing\":\"" + String(ringKind == 1 ? "alarm" : ringKind == 2 ? "event" : "") + "\"";
+  j += ",\"ring_test\":" + String(ringing() && ringTest ? "true" : "false");
   j += ",\"next_alarm\":\"" + nextAlarmText() + "\"";
   if (timeValid()) {
     char b[24]; time_t t = time(nullptr); struct tm tm; localtime_r(&t, &tm);
@@ -2993,6 +2996,7 @@ void handlePlans() {
   j += ",\"max_alarms\":" + String(MAX_ALARMS) + ",\"max_events\":" + String(MAX_EVENTS);
   j += ",\"ringing\":\"" + String(ringKind == 1 ? "alarm" : ringKind == 2 ? "event" : "") + "\"";
   j += ",\"ring_label\":\"" + jsonEsc(ringLabel) + "\"";
+  j += ",\"ring_test\":" + String(ringing() && ringTest ? "true" : "false");
   j += ",\"snooze\":\"";
   if (snoozeAt) { struct tm lt; localtime_r(&snoozeAt, &lt); snprintf(b, sizeof(b), "%02d:%02d", lt.tm_hour, lt.tm_min); j += b; }
   j += "\",\"snooze_idx\":" + String(snoozeAt ? snoozeIdx : -1);
@@ -3025,11 +3029,8 @@ void handlePlans() {
   sendJson(j);
 }
 
-void handleAlarmSet() {
-  int i = server.hasArg("i") ? server.arg("i").toInt() : -1;
-  if (i >= alarmCount) i = -1;
-  if (i < 0 && alarmCount >= MAX_ALARMS) { sendJson("{\"ok\":false,\"err\":\"Maximal " + String(MAX_ALARMS) + " Wecker\"}", 400); return; }
-  AlarmEntry a;
+// Felder aus der Anfrage in einen Wecker übernehmen (i >= 0: bestehenden als Grundlage)
+void alarmFromArgs(AlarmEntry& a, int i) {
   if (i >= 0) a = alarms[i];
   else { memset(&a, 0, sizeof(a)); a.en = 1; a.h = 7; a.days = 0x1F; a.emo = E_CUTE; a.snd = 3; a.vibe = 1; a.snooze = 5; }
   if (server.hasArg("time")) { uint16_t hm = parseHM(server.arg("time"), a.h * 60 + a.m); a.h = hm / 60; a.m = hm % 60; }
@@ -3041,6 +3042,14 @@ void handleAlarmSet() {
   a.snooze = argInt("snooze", a.snooze, 0, 30);
   if (server.hasArg("label")) copyLabel(a.label, sizeof(a.label), server.arg("label"));
   sanitizeAlarm(a);
+}
+
+void handleAlarmSet() {
+  int i = server.hasArg("i") ? server.arg("i").toInt() : -1;
+  if (i >= alarmCount) i = -1;
+  if (i < 0 && alarmCount >= MAX_ALARMS) { sendJson("{\"ok\":false,\"err\":\"Maximal " + String(MAX_ALARMS) + " Wecker\"}", 400); return; }
+  AlarmEntry a;
+  alarmFromArgs(a, i);
   if (i >= 0 && ringKind == 1 && ringIdx == i) stopRing(false, true);
   if (i >= 0 && snoozeIdx == i) { snoozeAt = 0; snoozeIdx = -1; }
   if (i < 0) i = alarmCount++;
@@ -3052,7 +3061,7 @@ void handleAlarmSet() {
 void handleAlarmDel() {
   int i = server.arg("i").toInt();
   if (!server.hasArg("i") || i < 0 || i >= alarmCount) { sendJson("{\"ok\":false,\"err\":\"unbekannter Wecker\"}", 400); return; }
-  if (ringKind == 1) { if (ringIdx == i) stopRing(false, true); else if (ringIdx > i) ringIdx--; }
+  if (ringKind == 1) { if (ringIdx == i) stopRing(false, true); else if (ringIdx > i && ringIdx < TEST_ALARM) ringIdx--; }
   if (snoozeIdx == i) { snoozeAt = 0; snoozeIdx = -1; } else if (snoozeIdx > i) snoozeIdx--;
   for (int k = i; k < alarmCount - 1; k++) alarms[k] = alarms[k + 1];
   alarmCount--;
@@ -3060,11 +3069,7 @@ void handleAlarmDel() {
   sendOk();
 }
 
-void handleEventSet() {
-  int i = server.hasArg("i") ? server.arg("i").toInt() : -1;
-  if (i >= eventCount) i = -1;
-  if (i < 0 && eventCount >= MAX_EVENTS) { sendJson("{\"ok\":false,\"err\":\"Maximal " + String(MAX_EVENTS) + " Termine\"}", 400); return; }
-  EventEntry e;
+bool eventFromArgs(EventEntry& e, int i) {       // false = Datum ungültig
   if (i >= 0) e = events[i];
   else {
     memset(&e, 0, sizeof(e)); e.en = 1; e.h = 12; e.emo = E_STAR; e.snd = 2; e.vibe = 1;
@@ -3074,7 +3079,7 @@ void handleEventSet() {
   if (server.hasArg("date")) {                         // JJJJ-MM-TT oder TT.MM.JJJJ
     String dt = server.arg("date"); int y = 0, mo = 0, dd = 0;
     if (sscanf(dt.c_str(), "%d-%d-%d", &y, &mo, &dd) != 3) { if (sscanf(dt.c_str(), "%d.%d.%d", &dd, &mo, &y) != 3) y = 0; }
-    if (y < 1900 || y > 2099 || mo < 1 || mo > 12 || dd < 1 || dd > 31) { sendJson("{\"ok\":false,\"err\":\"Datum ungültig\"}", 400); return; }
+    if (y < 1900 || y > 2099 || mo < 1 || mo > 12 || dd < 1 || dd > 31) return false;
     e.y = y; e.mo = mo; e.day = dd;
   }
   if (server.hasArg("time")) { uint16_t hm = parseHM(server.arg("time"), e.h * 60 + e.mi); e.h = hm / 60; e.mi = hm % 60; }
@@ -3086,6 +3091,15 @@ void handleEventSet() {
   bool vb = e.vibe; if (argBool("vibe", vb)) e.vibe = vb;
   if (server.hasArg("label")) copyLabel(e.label, sizeof(e.label), server.arg("label"));
   sanitizeEvent(e);
+  return true;
+}
+
+void handleEventSet() {
+  int i = server.hasArg("i") ? server.arg("i").toInt() : -1;
+  if (i >= eventCount) i = -1;
+  if (i < 0 && eventCount >= MAX_EVENTS) { sendJson("{\"ok\":false,\"err\":\"Maximal " + String(MAX_EVENTS) + " Termine\"}", 400); return; }
+  EventEntry e;
+  if (!eventFromArgs(e, i)) { sendJson("{\"ok\":false,\"err\":\"Datum ungültig\"}", 400); return; }
   if (i >= 0 && ringKind == 2 && ringIdx == i) stopRing(false, true);
   if (i < 0) i = eventCount++;
   events[i] = e;
@@ -3096,7 +3110,7 @@ void handleEventSet() {
 void handleEventDel() {
   int i = server.arg("i").toInt();
   if (!server.hasArg("i") || i < 0 || i >= eventCount) { sendJson("{\"ok\":false,\"err\":\"unbekannter Termin\"}", 400); return; }
-  if (ringKind == 2) { if (ringIdx == i) stopRing(false, true); else if (ringIdx > i) ringIdx--; }
+  if (ringKind == 2) { if (ringIdx == i) stopRing(false, true); else if (ringIdx > i && ringIdx < TEST_EVENT) ringIdx--; }
   if (pendingEvent == i) pendingEvent = -1; else if (pendingEvent > i) pendingEvent--;
   for (int k = i; k < eventCount - 1; k++) events[k] = events[k + 1];
   eventCount--;
@@ -3199,16 +3213,21 @@ void setupServer() {
   server.on("/api/event/del", handleEventDel);
   server.on("/api/alarm/stop",   []() { stopRing(false); sendOk(); });
   server.on("/api/alarm/snooze", []() { stopRing(true); sendOk(); });
+  // Probelauf: ?i=Nr. testet den gespeicherten Eintrag. Mitgeschickte Felder (time, snd, emo …) gelten nur für den
+  // Test, ohne i wird ein neuer, noch nicht gespeicherter Eintrag getestet. Gespeichert wird dabei nichts.
   server.on("/api/alarm/test", []() {
-    int i = server.arg("i").toInt();
-    if (i < 0 || i >= alarmCount) { sendJson("{\"ok\":false,\"err\":\"unbekannter Wecker\"}", 400); return; }
-    startRing(1, i, true); sendOk();
+    int i = server.hasArg("i") ? server.arg("i").toInt() : -1;
+    if (i >= alarmCount) { sendJson("{\"ok\":false,\"err\":\"unbekannter Wecker\"}", 400); return; }
+    if (ringing()) stopRing(false, true);
+    alarmFromArgs(alarms[TEST_ALARM], i);
+    startRing(1, TEST_ALARM, true); sendOk();
   });
   server.on("/api/event/test", []() {
-    int i = server.arg("i").toInt();
-    if (i < 0 || i >= eventCount) { sendJson("{\"ok\":false,\"err\":\"unbekannter Termin\"}", 400); return; }
-    if (ringKind == 1) stopRing(false, true);
-    startRing(2, i, true); sendOk();
+    int i = server.hasArg("i") ? server.arg("i").toInt() : -1;
+    if (i >= eventCount) { sendJson("{\"ok\":false,\"err\":\"unbekannter Termin\"}", 400); return; }
+    if (!eventFromArgs(events[TEST_EVENT], i)) { sendJson("{\"ok\":false,\"err\":\"Datum ungültig\"}", 400); return; }
+    if (ringing()) stopRing(false, true);
+    startRing(2, TEST_EVENT, true); sendOk();
   });
   server.on("/api/sound", []() {                         // Melodie probehören: ?id=0..10, ?stop=1
     if (ringing()) { sendJson("{\"ok\":false,\"err\":\"klingelt gerade\"}", 409); return; }
@@ -3271,7 +3290,16 @@ void handleSerialCmd(String line) {
   else if (cmd == "alarm" || cmd == "wecker") {
     if (arg == "stop" || arg == "aus") stopRing(false);
     else if (arg == "snooze") stopRing(true);
-    else if (arg.startsWith("test")) startRing(1, arg.substring(4).toInt(), true);
+    else if (arg.startsWith("test")) {
+      int i = arg.substring(4).toInt();
+      if (i >= 0 && i < alarmCount) { if (ringing()) stopRing(false, true); alarms[TEST_ALARM] = alarms[i]; startRing(1, TEST_ALARM, true); }
+      else { Serial.println("ERR unbekannter Wecker"); return; }
+    }
+    else if (arg.startsWith("event")) {
+      int i = arg.substring(5).toInt();
+      if (i >= 0 && i < eventCount) { if (ringing()) stopRing(false, true); events[TEST_EVENT] = events[i]; startRing(2, TEST_EVENT, true); }
+      else { Serial.println("ERR unbekannter Termin"); return; }
+    }
     else {
       time_t now = time(nullptr);
       for (uint8_t i = 0; i < alarmCount; i++)
@@ -3296,7 +3324,7 @@ void handleSerialCmd(String line) {
     Serial.println("Befehle: emotion <name> [ms] | text <t> | loop <t> | show <t> | speed <1-10> | notify <t>");
     Serial.println("         beep [f] | vibe [ms] | dim <1-100> | quiet on|off|auto|toggle | clock [demo]");
     Serial.println("         tap | double | long | shake | info | sleep | wake | portal | restart | status");
-    Serial.println("         alarm [stop|snooze|test <i>] | sound <0-10>");
+    Serial.println("         alarm [stop|snooze|test <i>|event <i>] | sound <0-10>");
     Serial.print("Emotionen:");
     for (int i = 0; i < E_COUNT; i++) { Serial.print(' '); Serial.print(EMO_NAMES[i]); }
     Serial.println();
