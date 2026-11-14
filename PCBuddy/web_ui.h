@@ -180,7 +180,7 @@ const char DASH_HTML[] PROGMEM = R"HTML(<!doctype html><html lang="de"><head><me
 <button class="btn" onclick="act('/api/shake')">Schütteln</button><button class="btn" onclick="act('/api/rock')">Schaukeln</button></div>
 <p class="hint">Wie am Gerät: Tippen = Reaktion, 2× = Info-Folien, 3× = Ruhemodus, lang = verliebt, schütteln = wütend, langsam hin und her = „Uh“.</p></div>
 <div class="card"><h2>Aktionen</h2><div class="grid">
-<button class="btn" onclick="act('/api/info')">Info-Folien</button><button class="btn" onclick="act('/api/clock')">Pac-Man-Uhr</button>
+<button class="btn" onclick="act('/api/info')">Info-Folien</button><button class="btn" onclick="act('/api/clock')">Uhr</button>
 <button class="btn" onclick="act('/api/clock/demo')">Uhr-Animation</button><button class="btn" onclick="act('/api/sleep')">Schlafen</button>
 <button class="btn" onclick="act('/api/wake')">Aufwecken</button><button class="btn" onclick="act('/api/vibrate?ms=350')">Vibrieren</button>
 <button class="btn" onclick="act('/api/beep?f=2800&ms=120')">Piepen</button></div></div>
@@ -245,9 +245,17 @@ const char DASH_HTML[] PROGMEM = R"HTML(<!doctype html><html lang="de"><head><me
 <div class="hint">Gleiche Verdrahtung. Änderung startet das Gerät neu.</div>
 <label>Helligkeit normal <span id="brV"></span></label><input type="range" name="bright" min="1" max="100" oninput="brV.textContent=this.value+' %'">
 <label class="tg"><span>Um 180° drehen</span><input type="checkbox" name="flip"></label></div>
+<div class="card"><h2>Uhr</h2>
+<label>Design</label><select name="clock_style" id="ckSel" onchange="ckInfo()">
+<option value="0">Pac-Man</option><option value="1">Fallende Blöcke</option><option value="2">Schlange</option><option value="3">Raumschiff</option>
+<option value="4">Katze</option><option value="5">Klappzahlen</option><option value="6">Tischtennis</option><option value="7">Wechselnd (jede Stunde ein anderes)</option></select>
+<p class="hint" id="ckDesc" style="min-height:3.2em"></p>
+<button class="btn" type="button" onclick="ckDemo()">▶ Auf dem Display vorführen</button>
+<label class="tg" style="margin-top:8px"><span>Geräusche zur vollen Stunde<small>Waka-Waka, Miau, Laser, Klack … je nach Design</small></span><input type="checkbox" name="pac_sound"></label>
+<div class="hint">Die Uhr erscheint per Info-Folie, über „Uhr“ auf der Startseite und nachts im Ruhemodus.</div></div>
 <div class="card"><h2>Info-Folien (Doppeltipp)</h2>
 <label class="tg"><span>Wetter</span><input type="checkbox" name="sl_weather"></label>
-<label class="tg"><span>Pac-Man-Uhr</span><input type="checkbox" name="sl_clock"></label>
+<label class="tg"><span>Uhr</span><input type="checkbox" name="sl_clock"></label>
 <label class="tg"><span>Wecker &amp; Termine</span><input type="checkbox" name="sl_events"></label>
 <label class="tg"><span>WLAN</span><input type="checkbox" name="sl_wifi"></label>
 <label class="tg"><span>IP-Adresse</span><input type="checkbox" name="sl_ip"></label>
@@ -256,7 +264,6 @@ const char DASH_HTML[] PROGMEM = R"HTML(<!doctype html><html lang="de"><head><me
 <div class="card"><h2>Ton, Vibration, Sensoren</h2>
 <label class="tg"><span>Ton</span><input type="checkbox" name="sound"></label>
 <label class="tg"><span>Vibration</span><input type="checkbox" name="vibe"></label>
-<label class="tg"><span>Waka-Waka<small>Ton zur vollen Stunde, wenn Pac-Man die Stunde frisst</small></span><input type="checkbox" name="pac_sound"></label>
 <label class="tg"><span>Neigungssensor (Schütteln &amp; Schaukeln)<small>Neigungssensor an GPIO 1 – weiter schütteln = Feuer, langsam schaukeln = „Uh“</small></span><input type="checkbox" name="shake_on"></label>
 <label>Schüttel-Empfindlichkeit <span id="skV"></span></label><input type="range" name="shake_sens" min="1" max="5" oninput="skV.textContent=['','wenig','gering','mittel','hoch','sehr hoch'][this.value]">
 <label>Auto-Schlaf nach</label><select name="sleep_min"><option value="0">nie</option><option value="2">2 min</option><option value="5">5 min</option><option value="10">10 min</option><option value="30">30 min</option><option value="60">60 min</option></select></div>
@@ -275,7 +282,7 @@ const char DASH_HTML[] PROGMEM = R"HTML(<!doctype html><html lang="de"><head><me
 <div class="seg" style="grid-template-columns:repeat(3,1fr)"><button type="button" class="btn" id="q2_on" onclick="quiet('on')">Jetzt an</button><button type="button" class="btn" id="q2_off" onclick="quiet('off')">Jetzt aus</button><button type="button" class="btn" id="q2_auto" onclick="quiet('auto')">Zeitplan</button></div></div>
 <div class="card"><h2>Im Ruhemodus</h2>
 <label>Helligkeit <span id="qbV"></span></label><input type="range" name="quiet_bright" min="1" max="100" oninput="qbV.textContent=this.value+' %'">
-<label>Anzeige nach 20 s</label><select name="quiet_disp"><option value="0">Gesicht (nur gedimmt)</option><option value="1">Schlafendes Gesicht</option><option value="2">Pac-Man-Uhr</option><option value="3">Display aus</option></select>
+<label>Anzeige nach 20 s</label><select name="quiet_disp"><option value="0">Gesicht (nur gedimmt)</option><option value="1">Schlafendes Gesicht</option><option value="2">Uhr (gewähltes Design)</option><option value="3">Display aus</option></select>
 <label class="tg"><span>Ton aus</span><input type="checkbox" name="quiet_mute"></label>
 <label class="tg"><span>Vibration aus</span><input type="checkbox" name="quiet_novibe"></label></div>
 </section>
@@ -429,6 +436,18 @@ async function plSet(k,v){const j=await plPost('/api/settings',{[k]:v});if(j.ok)
 async function ringAct(a){await act('/api/alarm/'+a,1);toast(a==='stop'?'Ausgeschaltet':'Schlummern');plLoad()}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')dlgClose()});
 
+// ---- Uhr-Design ----
+const CK_DESC=['Pac-Man rennt ums Bild und frisst kurz vor dem Minutenwechsel genau die Ziffer, die sich ändert. Ein Geist läuft hinterher.',
+ 'Die alten Blöcke fallen herunter, die neuen stapeln sich Reihe für Reihe auf. Zur vollen Minute wird unten eine Reihe abgeräumt.',
+ 'Eine Schlange jagt am Rand Äpfel. Zum Minutenwechsel frisst sie die alte Ziffer auf und zeichnet die neue Punkt für Punkt.',
+ 'Sterne funkeln, eine Untertasse fliegt vorbei. Das Raumschiff schießt die alte Ziffer ab, die neue wird hereingebeamt.',
+ 'Eine Katze spaziert auf dem Tisch herum, schubst die alte Ziffer herunter und staunt, wenn die neue herunterhüpft.',
+ 'Klassische Klappzahlen-Uhr mit Datum und Sekundenbalken. Zur vollen Minute klappt die Zahl um.',
+ 'Zwei Schläger spielen Ping-Pong, oben steht die Uhrzeit wie ein Spielstand. Wechselt die Minute, verpasst einer den Ball.',
+ 'Jede Stunde kommt ein anderes Design an die Reihe.'];
+function ckInfo(){$('#ckDesc').textContent=CK_DESC[+$('#ckSel').value]||''}
+function ckDemo(){fetch('/api/clock/demo?style='+$('#ckSel').value,{method:'POST'}).then(()=>toast(dirty?'Vorschau läuft – zum Übernehmen speichern':'Läuft auf dem Display')).catch(()=>toast('Keine Verbindung',1))}
+
 // ---- Tabs ----
 function showTab(t){if(!$('.tab[data-t="'+t+'"]'))t='start';
  $$('.tab').forEach(b=>b.classList.toggle('on',b.dataset.t===t));$$('.panel').forEach(p=>p.classList.toggle('on',p.dataset.p===t));
@@ -486,7 +505,7 @@ async function poll(){try{const s=await (await fetch('/api/status',{cache:'no-st
 async function loadCfg(){try{const s=await (await fetch('/api/settings',{cache:'no-store'})).json();
  for(const el of F.elements){if(!el.name||!(el.name in s))continue;if(el.type==='checkbox')el.checked=!!s[el.name];else el.value=s[el.name]}
  $('#alMax').value=s.alarm_max;$('#evQuiet').checked=!!s.ev_quiet;
- cyFill(s);brV.textContent=s.bright+' %';qbV.textContent=s.quiet_bright+' %';skV.textContent=['','wenig','gering','mittel','hoch','sehr hoch'][s.shake_sens];$('#mqSpeed').value=s.mq_speed;spV.textContent=s.mq_speed;
+ ckInfo();cyFill(s);brV.textContent=s.bright+' %';qbV.textContent=s.quiet_bright+' %';skV.textContent=['','wenig','gering','mittel','hoch','sehr hoch'][s.shake_sens];$('#mqSpeed').value=s.mq_speed;spV.textContent=s.mq_speed;
  const known=TZ.some(t=>t[0]===s.tz);$('#tzsel').value=known?s.tz:'custom';$('#tz').style.display=known?'none':'';$('#wssid').value=s.ssid||'';
  setDirty(false)}catch(e){toast('Einstellungen konnten nicht geladen werden',1)}}
 F.onsubmit=async e=>{e.preventDefault();const p=new URLSearchParams();

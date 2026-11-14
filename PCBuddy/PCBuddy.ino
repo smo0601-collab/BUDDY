@@ -56,7 +56,8 @@ struct Settings {
   bool slWeather = true, slClock = true, slWifi = true, slIp = true, slFw = true;
   bool lockInfo = false;
   bool sound = true, vibe = true;
-  bool pacSound = false;             // "Waka-Waka" beim Ziffern-Fressen
+  bool pacSound = false;             // Uhr-Geräusche zur vollen Stunde (Waka-Waka, Miau …)
+  uint8_t clockStyle = 0;            // Uhr-Design (CS_…), CS_COUNT = jede Stunde wechselnd
   bool shakeOn = true;               // Schütteln macht wütend
   uint8_t shakeSens = 3;             // Empfindlichkeit 1 (wenig) .. 5 (sehr)
   // Automatischer Emotions-Wechsel
@@ -92,7 +93,8 @@ enum Slide : uint8_t { S_WEATHER, S_CLOCK, S_EVENTS, S_WIFI, S_IP, S_FW, S_COUNT
 
 struct Particle { float x, y, vx, vy; int16_t life; uint8_t type; }; // 0 Herz, 1 z, 2 Funkeln
 struct Note { uint16_t f, ms; };
-struct PacWP { int16_t x, y; bool eat; };          // Wegpunkt der Pac-Man-Uhr
+struct PacWP { int16_t x, y; bool eat; };
+enum ClockStyle : uint8_t { CS_PAC, CS_BLOCKS, CS_SNAKE, CS_SPACE, CS_CAT, CS_FLIP, CS_PONG, CS_COUNT };   // CS_COUNT = wechselnd          // Wegpunkt der Pac-Man-Uhr
 enum PacState : uint8_t { PAC_ROAM, PAC_EAT };
 
 // ---- Wecker & Termine (werden als Block im NVS gespeichert – Aufbau nicht ändern!) ----
@@ -322,6 +324,7 @@ void loadSettings() {
   cfg.sound       = prefs.getBool("sound", true);
   cfg.vibe        = prefs.getBool("vibe", true);
   cfg.pacSound    = prefs.getBool("pacSound", false);
+  cfg.clockStyle  = min<uint8_t>(prefs.getUChar("clkStyle", 0), CS_COUNT);
   cfg.shakeOn     = prefs.getBool("shakeOn", true);
   cfg.shakeSens   = constrain(prefs.getUChar("shakeSens", 3), 1, 5);
   cfg.cycleMode   = min<uint8_t>(prefs.getUChar("cycMode", 0), 2);
@@ -365,6 +368,7 @@ void saveSettings() {
   prefs.putBool("sound", cfg.sound);
   prefs.putBool("vibe", cfg.vibe);
   prefs.putBool("pacSound", cfg.pacSound);
+  prefs.putUChar("clkStyle", cfg.clockStyle);
   prefs.putBool("shakeOn", cfg.shakeOn);
   prefs.putUChar("shakeSens", cfg.shakeSens);
   prefs.putUChar("cycMode", cfg.cycleMode);
@@ -1485,6 +1489,624 @@ void drawPacClock(uint32_t now, int ox, int oy) {
   drawPacman(ox + (int)pacX, oy + (int)pacY, PAC_R, pacDX, pacDY, pacMouth(now));
 }
 
+
+// =====================================================================
+//  Weitere Uhr-Designs
+//  Gemeinsamer Ablauf: Phase 1 = die alten Ziffern verschwinden (beginnt so,
+//  dass sie zur vollen Minute fertig ist), Phase 2 = die neuen Ziffern kommen –
+//  erst, wenn die Minute tatsächlich gewechselt hat. Alle Figuren sind eigene Entwürfe.
+// =====================================================================
+const char* const WDAY_SHORT[7] = {"So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"};   // tm_wday
+const char* const CLOCK_NAMES[CS_COUNT + 1] = {"Pac-Man", "Fallende Blöcke", "Schlange", "Raumschiff",
+                                               "Katze", "Klappzahlen", "Tischtennis", "Wechselnd"};
+const uint16_t CK_OUT[CS_COUNT] = {0, 900, 1400, 1700, 2200, 0, 3000};   // ms vor dem Minutenwechsel
+const uint16_t CK_IN[CS_COUNT]  = {0, 1300, 1300, 800, 900, 320, 700};   // ms danach
+
+int8_t   ckShown[4] = {-1, -1, -1, -1}, ckTarget[4], ckOld[4];
+bool     ckChg[4];
+uint8_t  ckPhase = 0, ckActive = 0xFF, ckAuto = 0, ckFx = 0;
+uint32_t ckT0 = 0, ckLastDraw = 0, ckLastStep = 0;
+int8_t   ckPreview = -1;                 // Vorschau aus dem Dashboard (nicht gespeichert)
+int      ckOX = 0, ckOY = 0;             // Verschiebung (Nacht-Uhr gegen Einbrennen)
+
+float ckEase(float p) { p = constrain(p, 0.0f, 1.0f); return p * p * (3 - 2 * p); }
+float ckProg(uint16_t dur) { return dur ? constrain(since(ckT0) / (float)dur, 0.0f, 1.0f) : 1.0f; }
+bool  ckHourFx() { return cfg.pacSound && (ckChg[0] || ckChg[1]); }
+void  ckSound(uint8_t bit, const Note* n, uint8_t len) {   // Geräusch zur vollen Stunde, je Übergang einmal
+  if (ckFx & bit) return;
+  ckFx |= bit;
+  if (ckHourFx()) playNotes(n, len);
+}
+uint32_t ckHash(uint32_t a) { a ^= a >> 16; a *= 0x7feb352dU; a ^= a >> 15; a *= 0x846ca68bU; a ^= a >> 16; return a; }
+
+// 5x7-Ziffer zeichnen: look 0 = volle Kästchen, 1 = Block mit Glanzpunkt, 2 = Punkt (sz 3)
+void ckBits(int8_t dg, int x, int y, int pitch, int sz, uint8_t look) {
+  if (dg < 0 || dg > 9) return;
+  for (int r = 0; r < 7; r++)
+    for (int c = 0; c < 5; c++)
+      if (DIGIT5x7[dg][r] & (0x10 >> c)) {
+        int px = ckOX + x + c * pitch, py = ckOY + y + r * pitch;
+        d->drawBox(px, py, sz, sz);
+        if (look == 1) { d->setDrawColor(0); d->drawPixel(px + 1, py + 1); d->setDrawColor(1); }
+      }
+}
+
+void ckColon(int y1, int y2) {
+  time_t t = time(nullptr);
+  if (t % 2) return;
+  d->drawBox(ckOX + 63, ckOY + y1, 3, 3);
+  d->drawBox(ckOX + 63, ckOY + y2, 3, 3);
+}
+
+// Ziffer i: was zeigen? (für Designs ohne eigene Logik)
+int8_t ckDigit(int i) { return ckShown[i]; }
+
+// ---------------------------------------------------------------- Fallende Blöcke
+uint8_t blFloor[2][32];
+void blMakeFloor(uint32_t seed) {
+  for (int r = 0; r < 2; r++)
+    for (int c = 0; c < 32; c++) {
+      uint32_t h = ckHash(seed * 131 + r * 37 + c);
+      blFloor[r][c] = r == 1 ? (h % 5 != 0) : (h % 3 == 0);
+    }
+}
+
+void blDraw(uint32_t now) {
+  const int Y = 15;
+  uint32_t el = since(ckT0);
+  for (int i = 0; i < 4; i++) {
+    int8_t dg = ckShown[i];
+    if (!ckChg[i] || ckPhase == 0) { ckBits(dg, PC_DX[i], Y, 5, 4, 1); continue; }
+    for (int r = 0; r < 7; r++)
+      for (int c = 0; c < 5; c++) {
+        if (!(DIGIT5x7[dg][r] & (0x10 >> c))) continue;
+        int bx = ckOX + PC_DX[i] + c * 5, by = Y + r * 5;
+        float y;
+        if (ckPhase == 1) {                                     // runterfallen, untere Reihen zuerst
+          float t = (float)el - c * 35 - (6 - r) * 20;
+          y = by + (t > 0 ? 0.0003f * t * t : 0);
+        } else {                                                 // neue Reihen fallen von oben und stapeln sich
+          float st = (6 - r) * 140.0f, f = (el - st) / 260.0f;
+          if (f <= 0) continue;
+          f = min(f, 1.0f);
+          y = -6 + (by + 6) * f * f;
+        }
+        if (y > 63) continue;
+        int iy = ckOY + (int)y;
+        d->drawBox(bx, iy, 4, 4);
+        d->setDrawColor(0); d->drawPixel(bx + 1, iy + 1); d->setDrawColor(1);
+      }
+  }
+  ckColon(Y + 9, Y + 20);
+  // Boden: zur vollen Minute wird die untere Reihe voll, blinkt und wird abgeräumt
+  bool clearing = ckPhase == 2 && el < 600;
+  for (int r = 0; r < 2; r++)
+    for (int c = 0; c < 32; c++) {
+      bool on = blFloor[r][c];
+      if (clearing && r == 1) on = (el / 100) % 2 == 0;
+      if (on) d->drawBox(ckOX + c * 4, ckOY + 56 + r * 4, 3, 3);
+    }
+  if (ckPhase == 2 && el >= 600 && !(ckFx & 2)) { ckFx |= 2; blMakeFloor((uint32_t)(time(nullptr) / 60)); }
+  if (ckPhase == 2) {
+    static const Note FX[] = {{523, 50}, {659, 50}, {784, 50}, {1047, 120}};
+    ckSound(1, FX, 4);
+  }
+}
+
+// ---------------------------------------------------------------- Schlange
+float   snS = 0, snApple = 90;
+uint8_t snLen = 6;
+void snTrackXY(float s, int& x, int& y) {          // Rundkurs: oben nach rechts, unten zurück
+  int t = ((int)s % 256 + 256) % 256;
+  if (t < 128) { x = t; y = 6; } else { x = 255 - t; y = 58; }
+}
+
+uint8_t snCells(int8_t dg, uint8_t* out) {          // Schlangenlinien-Reihenfolge der Punkte
+  uint8_t n = 0;
+  if (dg < 0) return 0;
+  for (int r = 0; r < 7; r++)
+    for (int k = 0; k < 5; k++) {
+      int c = (r % 2) ? 4 - k : k;
+      if (DIGIT5x7[dg][r] & (0x10 >> c)) out[n++] = r * 5 + c;
+    }
+  return n;
+}
+
+void snCellXY(int i, uint8_t cell, int& x, int& y) {
+  x = ckOX + PC_DX[i] + (cell % 5) * 5 + 1;
+  y = ckOY + PC_DY + (cell / 5) * 5 + 1;
+}
+
+void snHead(int x, int y, int dir) {
+  d->drawBox(x - 2, y - 2, 5, 5);
+  d->setDrawColor(0); d->drawPixel(x + (dir >= 0 ? 1 : -1), y - 1); d->setDrawColor(1);
+}
+
+void snStep() {
+  snS += 1.3f;
+  if (snS >= 256) { snS -= 256; snApple -= 256; }
+  float ahead = snApple - snS;
+  if (ahead < 0) ahead += 256;
+  if (ahead < 1.5f) {                                          // Apfel gefressen
+    snLen = snLen >= 16 ? 6 : snLen + 1;
+    snApple = snS + 60 + random(150);
+  }
+}
+
+void snDraw(uint32_t now) {
+  uint32_t el = since(ckT0);
+  uint8_t cells[35];
+  for (int i = 0; i < 4; i++) {
+    if (!ckChg[i] || ckPhase == 0) { ckBits(ckShown[i], PC_DX[i], PC_DY, 5, 3, 2); continue; }
+    uint8_t n = snCells(ckShown[i], cells);
+    if (!n) continue;
+    int x, y;
+    if (ckPhase == 1) {                                        // alte Ziffer wird aufgefressen
+      float p = ckProg(CK_OUT[CS_SNAKE]);
+      int k = (int)(p * n + 0.5f);
+      for (int j = k; j < n; j++) { snCellXY(i, cells[j], x, y); d->drawBox(x - 1, y - 1, 3, 3); }
+      if (k < n) {
+        int px = -1, py = -1;
+        for (int j = max(0, k - 3); j <= k; j++) {             // Körper + Kopf
+          snCellXY(i, cells[j], x, y);
+          if (px >= 0) { d->drawLine(px, py, x, y); d->drawLine(px, py + 1, x, y + 1); }
+          d->drawBox(x - 1, y - 1, 3, 3);
+          px = x; py = y;
+        }
+        snCellXY(i, cells[k], x, y);
+        snHead(x, y, (cells[k] / 5) % 2 ? -1 : 1);
+      }
+    } else {                                                   // neue Ziffer wird gezeichnet
+      float p = ckProg(CK_IN[CS_SNAKE]);
+      int k = (int)ceilf(p * n);
+      for (int j = 0; j < k && j < n; j++) { snCellXY(i, cells[j], x, y); d->drawBox(x - 1, y - 1, 3, 3); }
+      if (p < 1 && k > 0) { snCellXY(i, cells[k - 1], x, y); snHead(x, y, (cells[k - 1] / 5) % 2 ? -1 : 1); }
+    }
+  }
+  ckColon(PC_DY + 8, PC_DY + 23);
+  // Schlange und Apfel am Rand
+  int ax, ay; snTrackXY(snApple, ax, ay);
+  d->drawDisc(ckOX + ax, ckOY + ay, 2); d->drawPixel(ckOX + ax + 1, ckOY + ay - 3);
+  for (int k = snLen - 1; k >= 0; k--) {
+    int x, y; snTrackXY(snS - k * 4, x, y);
+    if (k == 0) snHead(ckOX + x, ckOY + y, y < 32 ? 1 : -1);
+    else d->drawBox(ckOX + x - 1, ckOY + y - 1, 3, 3);
+  }
+  if (ckPhase == 2) {
+    static const Note FX[] = {{330, 40}, {392, 40}, {523, 70}};
+    ckSound(1, FX, 3);
+  }
+}
+
+// ---------------------------------------------------------------- Raumschiff
+int8_t  spStarX[20], spStarY[20];
+uint8_t spStars = 0;
+float   spX0 = 64, spTX = 64;
+
+void spInit() {
+  spStars = 0;
+  for (int k = 0; k < 20; k++) {                       // gleichmäßig über den Himmel oberhalb der Ziffern
+    spStarX[k] = k * 128 / 20 + ckHash(k + 11) % 5;
+    spStarY[k] = 1 + ckHash(k + 97) % 11;
+  }
+  spStars = 20;
+}
+
+float spIdleX(uint32_t now) { return 64 + 44 * sinf(now / 2600.0f); }
+
+void spShip(int x, int y, uint32_t now) {        // eigenes Design: Pfeilschiff mit Flügeln
+  d->drawTriangle(x, y - 7, x - 3, y + 1, x + 3, y + 1);
+  d->drawBox(x - 6, y - 1, 13, 3);
+  d->drawBox(x - 6, y - 4, 2, 4); d->drawBox(x + 5, y - 4, 2, 4);
+  d->setDrawColor(0); d->drawPixel(x, y - 3); d->setDrawColor(1);
+  if ((now / 80) % 2) { d->drawVLine(x - 1, y + 2, 2); d->drawVLine(x + 1, y + 2, 1); }
+  else d->drawVLine(x, y + 2, 3);
+}
+
+void spDraw(uint32_t now) {
+  if (!spStars) spInit();
+  for (int k = 0; k < spStars; k++) {
+    if ((now / 400 + k * 7) % 9 == 0) continue;               // funkeln
+    d->drawPixel(ckOX + spStarX[k], ckOY + spStarY[k]);
+    if (k % 5 == 0 && (now / 400 + k) % 4 == 0) {
+      d->drawPixel(ckOX + spStarX[k] - 1, ckOY + spStarY[k]); d->drawPixel(ckOX + spStarX[k] + 1, ckOY + spStarY[k]);
+    }
+  }
+  // Untertasse oben, alle 18 s
+  uint32_t ut = now % 18000;
+  if (ut < 6000) {
+    int ux = -14 + (int)(ut * 156 / 6000);
+    d->drawFilledEllipse(ckOX + ux, ckOY + 7, 7, 2);
+    d->drawDisc(ckOX + ux, ckOY + 5, 3, U8G2_DRAW_UPPER_LEFT | U8G2_DRAW_UPPER_RIGHT);
+    d->setDrawColor(0);
+    for (int k = -4; k <= 4; k += 4) if (((now / 150) + k) % 2) d->drawPixel(ckOX + ux + k, ckOY + 7);
+    d->setDrawColor(1);
+  }
+  uint32_t el = since(ckT0);
+  float shipX = spIdleX(now);
+  if (ckPhase == 1) shipX = spX0 + (spTX - spX0) * ckEase(el / 700.0f);
+  if (ckPhase == 2) shipX = spTX + (spIdleX(now) - spTX) * ckEase(el / (float)CK_IN[CS_SPACE]);
+  for (int i = 0; i < 4; i++) {
+    int8_t dg = ckShown[i];
+    if (!ckChg[i] || ckPhase == 0) { ckBits(dg, PC_DX[i], PC_DY, 5, 3, 0); continue; }
+    if (ckPhase == 1) {
+      if (el < 950) { ckBits(dg, PC_DX[i], PC_DY, 5, 3, 0); continue; }
+      uint32_t te = el - 950;                                   // Explosion
+      if (te > 750) continue;
+      int cx = PC_DX[i] + 11, cy = PC_DY + 16;
+      if (te < 220) d->drawCircle(ckOX + cx, ckOY + cy, 2 + te / 22);
+      for (int r = 0; r < 7; r++) for (int c = 0; c < 5; c++) {
+        if (!(DIGIT5x7[dg][r] & (0x10 >> c))) continue;
+        uint32_t h = ckHash(i * 64 + r * 8 + c + 7);
+        if ((int)(h % 100) > 100 - (int)(te * 100 / 750)) continue;   // ausblenden
+        float bx = PC_DX[i] + c * 5 + 1, by = PC_DY + r * 5 + 1;
+        float vx = (bx - cx) * 0.045f + ((int)(h % 21) - 10) * 0.004f;
+        float vy = (by - cy) * 0.045f + ((int)((h >> 8) % 21) - 10) * 0.004f;
+        int px = ckOX + (int)(bx + vx * te), py = ckOY + (int)(by + vy * te);
+        d->drawPixel(px, py);
+        if (te < 300) d->drawPixel(px + 1, py);
+      }
+    } else {                                                   // hereinbeamen, Zeile für Zeile
+      float p = ckProg(CK_IN[CS_SPACE]);
+      int rows = (int)(p * 8);
+      for (int r = 0; r < 7 && r < rows; r++) for (int c = 0; c < 5; c++)
+        if (DIGIT5x7[dg][r] & (0x10 >> c)) d->drawBox(ckOX + PC_DX[i] + c * 5, ckOY + PC_DY + r * 5, 3, 3);
+      if (p < 1) {
+        int sy = ckOY + PC_DY + min(rows, 7) * 5 - 1;
+        for (int x = 0; x < PC_W; x += 2) if (ckHash(x + now / 60) % 3) d->drawPixel(ckOX + PC_DX[i] + x, sy);
+      }
+    }
+  }
+  // Laser
+  if (ckPhase == 1 && el >= 700 && el < 950) {
+    static const Note FX[] = {{1800, 30}, {1400, 30}, {1000, 30}, {700, 50}};
+    ckSound(1, FX, 4);
+    if ((el / 40) % 2 == 0)
+      for (int i = 0; i < 4; i++) if (ckChg[i]) d->drawLine(ckOX + (int)shipX, ckOY + 50, ckOX + PC_DX[i] + 11, ckOY + PC_DY + 33);
+  }
+  if (ckPhase == 1 && el >= 950) {
+    static const Note FX[] = {{150, 60}, {110, 80}, {80, 120}};
+    ckSound(2, FX, 3);
+  }
+  ckColon(PC_DY + 8, PC_DY + 23);
+  spShip(ckOX + (int)shipX, ckOY + 57, now);
+}
+
+// ---------------------------------------------------------------- Katze
+float    catX = 64, catTX = 90, catX0 = 64, catSX = 64;
+int8_t   catDir = 1, catHitDir = 1;
+uint8_t  catMode = 0;                   // 0 läuft, 1 sitzt
+uint32_t catUntil = 0;
+const int CAT_DY = 9;                   // Ziffern etwas höher, damit die Katze darunter Platz hat
+
+void catStep() {
+  if (catMode == 0) {
+    float dx = catTX - catX;
+    if (fabsf(dx) < 1) { catMode = 1; catUntil = millis() + 2000 + random(4000); }
+    else { catDir = dx > 0 ? 1 : -1; catX += catDir * 0.9f; }
+  } else if ((int32_t)(millis() - catUntil) >= 0) {
+    catMode = 0;
+    do { catTX = 14 + random(100); } while (fabsf(catTX - catX) < 20);
+  }
+}
+
+// pose: 0 laufen, 1 sitzen, 2 Pfote hoch, 3 nach oben schauen
+void catDraw(int x, int dir, uint8_t pose, uint32_t now, bool fast) {
+  x += ckOX;
+  int oy = ckOY;
+  d->drawFilledEllipse(x, oy + 58, 7, 3);                    // Körper
+  if (pose == 0) {                                           // Beine
+    int f = (now / (fast ? 70 : 150)) % 2;
+    for (int k = 0; k < 4; k++) {
+      int lx = x + (k < 2 ? -5 + k * 2 : 2 + (k - 2) * 2) + ((k + f) % 2 ? 1 : -1) * (k % 2 ? 0 : 1);
+      d->drawVLine(lx, oy + 61, 2);
+    }
+  } else {
+    d->drawBox(x - dir * 6 - 2, oy + 58, 5, 4);               // Hinterteil sitzt
+    d->drawVLine(x + dir * 4, oy + 60, 3); d->drawVLine(x + dir * 5, oy + 60, 3);
+  }
+  int hx = x + dir * 8, hy = oy + (pose == 3 ? 52 : 53);
+  d->drawDisc(hx, hy, 4);                                    // Kopf + Ohren
+  d->drawTriangle(hx - 4, hy - 2, hx - 3, hy - 7, hx, hy - 3);
+  d->drawTriangle(hx, hy - 3, hx + 3, hy - 7, hx + 4, hy - 2);
+  d->setDrawColor(0);
+  int ey = hy - (pose == 3 ? 2 : 1);
+  if ((now % 4000) < 150) { d->drawHLine(hx - 2, ey, 2); d->drawHLine(hx + 1, ey, 2); }   // blinzeln
+  else { d->drawPixel(hx - 2, ey); d->drawPixel(hx + 2, ey); }
+  d->drawPixel(hx, hy + 1);
+  d->setDrawColor(1);
+  d->drawLine(hx + 4, hy + 1, hx + 7, hy);                   // Schnurrhaare
+  d->drawLine(hx - 4, hy + 1, hx - 7, hy);
+  int sw = (int)(3 * sinf(now / 300.0f));                    // Schwanz
+  int tx = x - dir * 7, mx = x - dir * 11, tipx = x - dir * 10 + sw;
+  d->drawLine(tx, oy + 57, mx, oy + 53); d->drawLine(mx, oy + 53, tipx, oy + 48);
+  d->drawLine(tx, oy + 56, mx, oy + 52);
+  if (pose == 2) {                                           // Pfote hoch
+    d->drawLine(hx + dir * 2, hy - 2, hx + dir * 3, oy + CAT_DY + 35);
+    d->drawLine(hx + dir * 3, hy - 2, hx + dir * 4, oy + CAT_DY + 35);
+  }
+}
+
+float ckBounce(float p) {             // easeOutBounce
+  if (p < 1 / 2.75f) return 7.5625f * p * p;
+  if (p < 2 / 2.75f) { p -= 1.5f / 2.75f; return 7.5625f * p * p + 0.75f; }
+  if (p < 2.5f / 2.75f) { p -= 2.25f / 2.75f; return 7.5625f * p * p + 0.9375f; }
+  p -= 2.625f / 2.75f; return 7.5625f * p * p + 0.984375f;
+}
+
+void catDrawAll(uint32_t now) {
+  uint32_t el = since(ckT0);
+  for (int i = 0; i < 4; i++) {
+    if (!ckChg[i] || ckPhase == 0) { ckBits(ckShown[i], PC_DX[i], CAT_DY, 5, 3, 0); continue; }
+    if (ckPhase == 1) {
+      if (el < 1500) { ckBits(ckShown[i], PC_DX[i], CAT_DY, 5, 3, 0); continue; }
+      float t = el - 1500;
+      int dy = (int)(0.0004f * t * t), dx = (int)(catHitDir * 0.03f * t);
+      if (CAT_DY + dy < 64) ckBits(ckShown[i], PC_DX[i] + dx, CAT_DY + dy, 5, 3, 0);
+    } else {
+      float p = ckProg(CK_IN[CS_CAT]);
+      ckBits(ckShown[i], PC_DX[i], CAT_DY - (int)((1 - ckBounce(p)) * 42), 5, 3, 0);
+    }
+  }
+  ckColon(CAT_DY + 8, CAT_DY + 23);
+  d->drawHLine(ckOX, ckOY + 63, 128);                        // Tisch
+  if (ckPhase == 0) { catDraw((int)catX, catDir, catMode == 0 ? 0 : 1, now, false); return; }
+  if (ckPhase == 1) {
+    if (el < 1200) { catX = catX0 + (catSX - catX0) * ckEase(el / 1200.0f); catDraw((int)catX, catHitDir, 0, now, true); }
+    else if (el < 1500) {
+      catX = catSX; catDraw((int)catX, catHitDir, 2, now, false);
+      static const Note FX[] = {{900, 80}, {780, 80}, {650, 180}};   // Miau
+      ckSound(1, FX, 3);
+    }
+    else catDraw((int)catX, catHitDir, 1, now, false);
+    return;
+  }
+  catDraw((int)catX, catHitDir, 3, now, false);
+  if (((now / 200) % 2) && el < 600) {                       // "!" über dem Kopf
+    int hx = ckOX + (int)catX + catHitDir * 8;
+    d->drawVLine(hx, ckOY + 41, 3); d->drawPixel(hx, ckOY + 45);
+  }
+}
+
+// ---------------------------------------------------------------- Klappzahlen
+const int FL_X[4] = {1, 31, 67, 97}, FL_W = 30, FL_Y = 12, FL_H = 42;
+
+void flCard(int i, int8_t dg, int y0, int y1) {               // Karte mit Ziffer, nur zwischen y0 und y1
+  if (y1 <= y0) return;
+  int x = ckOX + FL_X[i];
+  d->setClipWindow(max(0, x), max(0, ckOY + y0), min(128, x + FL_W), min(64, ckOY + y1));
+  d->drawRBox(x, ckOY + FL_Y, FL_W, FL_H, 3);
+  d->setDrawColor(0);
+  d->setFont(u8g2_font_logisoso32_tn);
+  char s[2] = {(char)('0' + max<int8_t>(dg, 0)), 0};
+  d->drawStr(x + (FL_W - d->getStrWidth(s)) / 2, ckOY + FL_Y + 37, s);
+  d->setDrawColor(1);
+  d->setMaxClipWindow();
+}
+
+void flDraw(uint32_t now) {
+  struct timeval tv; gettimeofday(&tv, nullptr);
+  struct tm tm; localtime_r(&tv.tv_sec, &tm);
+  const int MID = FL_Y + FL_H / 2;
+  float p = ckPhase == 2 ? ckProg(CK_IN[CS_FLIP]) : 1;
+  for (int i = 0; i < 4; i++) {
+    if (!ckChg[i] || ckPhase != 2 || p >= 1) { flCard(i, ckShown[i], FL_Y, FL_Y + FL_H); }
+    else {
+      int8_t nw = ckShown[i], od = ckOld[i];
+      if (p < 0.5f) {                                         // obere Klappe (alt) fällt nach unten
+        int h = (int)((1 - 2 * p) * (FL_H / 2));
+        flCard(i, nw, FL_Y, MID - h);
+        flCard(i, od, MID - h, MID);
+        flCard(i, od, MID, FL_Y + FL_H);
+        d->drawHLine(ckOX + FL_X[i], ckOY + MID - h, FL_W);
+      } else {                                                // untere Klappe (neu) klappt herunter
+        int h = (int)((2 * p - 1) * (FL_H / 2));
+        flCard(i, nw, FL_Y, MID);
+        flCard(i, nw, MID, MID + h);
+        flCard(i, od, MID + h, FL_Y + FL_H);
+        d->setDrawColor(0); d->drawHLine(ckOX + FL_X[i], ckOY + MID + h, FL_W); d->setDrawColor(1);
+      }
+    }
+    d->setDrawColor(0); d->drawHLine(ckOX + FL_X[i], ckOY + MID, FL_W); d->setDrawColor(1);   // Trennfuge
+    d->drawPixel(ckOX + FL_X[i], ckOY + MID); d->drawPixel(ckOX + FL_X[i] + FL_W - 1, ckOY + MID);
+  }
+  if (tm.tm_sec % 2 == 0) { d->drawBox(ckOX + 63, ckOY + 26, 2, 3); d->drawBox(ckOX + 63, ckOY + 38, 2, 3); }
+  char b[24];
+  static const char* const MON[12] = {"Jan", "Feb", "März", "Apr", "Mai", "Juni", "Juli", "Aug", "Sep", "Okt", "Nov", "Dez"};
+  snprintf(b, sizeof(b), "%s %d. %s", WDAY_SHORT[tm.tm_wday], tm.tm_mday, MON[tm.tm_mon]);
+  d->setFont(u8g2_font_helvR08_tf);
+  d->drawUTF8(ckOX + (128 - d->getUTF8Width(b)) / 2, ckOY + 9, b);
+  int w = (int)((tm.tm_sec * 1000 + tv.tv_usec / 1000) * 126L / 60000);   // Sekundenbalken
+  d->drawHLine(ckOX + 1, ckOY + 59, w);
+  d->drawHLine(ckOX + 1, ckOY + 60, w);
+  for (int k = 0; k <= 6; k++) d->drawPixel(ckOX + 1 + k * 21, ckOY + 62);
+  if (ckPhase == 2) {
+    static const Note FX[] = {{200, 12}, {0, 60}, {160, 12}};
+    ckSound(1, FX, 3);
+  }
+}
+
+// ---------------------------------------------------------------- Tischtennis
+float    pgBX = 62, pgBY = 30, pgVX = 1.6f, pgVY = 0.7f, pgLY = 26, pgRY = 26;
+bool     pgBall = true, pgOut = false;
+int8_t   pgLose = -1;                       // 0 links verpasst, 1 rechts verpasst
+uint32_t pgServeAt = 0;
+const int PG_PH = 12;
+const int PG_DX[4] = {27, 45, 68, 86};
+
+void pgServe(int8_t toward, float speed) {
+  pgBX = 62; pgBY = 18 + random(26);
+  pgVX = (toward == 0 ? -1 : 1) * speed;
+  pgVY = random(2) ? 0.7f : -0.7f;
+  pgBall = true; pgServeAt = 0;
+}
+
+// Ball so schnell machen, dass er genau nach 'ms' auf der Seite 'lose' ins Aus geht
+void pgPlanMiss(int8_t lose, int32_t ms) {
+  pgLose = lose; pgOut = false;
+  float steps = max<int32_t>(ms, 300) / 30.0f;
+  if (!pgBall) { pgServe(lose, 2); }
+  float edge = lose == 0 ? -7 : 135, other = lose == 0 ? 122 : 3;
+  bool toward = (lose == 0) == (pgVX < 0);
+  float dist = toward ? fabsf(edge - pgBX) : fabsf(other - pgBX) + fabsf(other - edge);
+  float sp = constrain(dist / steps, 1.0f, 6.0f);
+  pgVX = (pgVX < 0 ? -1 : 1) * sp;
+}
+
+void pgStep() {
+  if (!pgBall) {
+    if (pgServeAt && (int32_t)(millis() - pgServeAt) >= 0 && ckPhase == 0) pgServe(random(2), 1.6f);
+  } else {
+    pgBX += pgVX; pgBY += pgVY;
+    if (pgBY < 0)  { pgBY = -pgBY; pgVY = -pgVY; }
+    if (pgBY > 61) { pgBY = 122 - pgBY; pgVY = -pgVY; }
+    if (pgVX < 0 && pgLose != 0 && pgBX <= 3 && pgBX > -1 && pgBY + 3 >= pgLY && pgBY <= pgLY + PG_PH) {
+      pgBX = 3; pgVX = -pgVX; pgVY = constrain((pgBY + 1.5f - (pgLY + 6)) * 0.18f + (random(5) - 2) * 0.1f, -1.5f, 1.5f);
+      if (fabsf(pgVY) < 0.3f) pgVY = pgVY < 0 ? -0.4f : 0.4f;
+    }
+    if (pgVX > 0 && pgLose != 1 && pgBX + 3 >= 125 && pgBX < 126 && pgBY + 3 >= pgRY && pgBY <= pgRY + PG_PH) {
+      pgBX = 122; pgVX = -pgVX; pgVY = constrain((pgBY + 1.5f - (pgRY + 6)) * 0.18f + (random(5) - 2) * 0.1f, -1.5f, 1.5f);
+      if (fabsf(pgVY) < 0.3f) pgVY = pgVY < 0 ? -0.4f : 0.4f;
+    }
+    if (pgBX < -6 || pgBX > 134) {                             // Ball im Aus
+      pgBall = false;
+      if (pgLose >= 0) pgOut = true; else pgServeAt = millis() + 700;
+    }
+  }
+  for (int side = 0; side < 2; side++) {                       // Schläger folgen dem Ball
+    float& py = side == 0 ? pgLY : pgRY;
+    float target = 26;
+    if (pgBall && ((side == 0) == (pgVX < 0))) target = pgBY - 4.5f;
+    if (pgLose == side) target = pgBY > 32 ? 0 : 52;           // absichtlich daneben
+    float dy = target - py;
+    py += constrain(dy, -2.0f, 2.0f);
+    py = constrain(py, 0.0f, 52.0f);
+  }
+}
+
+void pgDraw(uint32_t now) {
+  uint32_t el = since(ckT0);
+  for (int y = 0; y < 64; y += 4) d->drawVLine(ckOX + 63, ckOY + y, 2);   // Netz
+  for (int i = 0; i < 4; i++) {
+    bool blink = ckPhase == 2 && ckChg[i] && (el / 100) % 2;
+    if (!blink) ckBits(ckShown[i], PG_DX[i], 3, 3, 3, 0);
+  }
+  d->drawBox(ckOX + 1, ckOY + (int)pgLY, 2, PG_PH);
+  d->drawBox(ckOX + 125, ckOY + (int)pgRY, 2, PG_PH);
+  if (pgBall) d->drawBox(ckOX + (int)pgBX, ckOY + (int)pgBY, 3, 3);
+  if (ckPhase == 2) {
+    static const Note FX[] = {{523, 60}, {392, 60}, {262, 120}};
+    ckSound(1, FX, 3);
+  }
+}
+
+// ---------------------------------------------------------------- Ablaufsteuerung
+void ckStyleReset(uint8_t st) {
+  ckPhase = 0; ckFx = 0;
+  switch (st) {
+    case CS_BLOCKS: blMakeFloor((uint32_t)(time(nullptr) / 60)); break;
+    case CS_SNAKE:  snS = random(256); snApple = snS + 80; snLen = 6; break;
+    case CS_SPACE:  spInit(); break;
+    case CS_CAT:    catX = 30 + random(70); catMode = 1; catUntil = millis() + 1500; break;
+    case CS_PONG:   pgLose = -1; pgOut = false; pgServe(random(2), 1.6f); break;
+  }
+}
+
+void ckStart(uint8_t st, const int8_t tgt[4], int32_t msLeft, uint32_t now) {
+  for (int i = 0; i < 4; i++) { ckTarget[i] = tgt[i]; ckChg[i] = tgt[i] != ckShown[i]; }
+  ckPhase = 1; ckT0 = millis(); ckFx = 0;
+  int last = -1, cnt = 0; float sx = 0;
+  for (int i = 0; i < 4; i++) if (ckChg[i]) { last = i; sx += PC_DX[i] + 11; cnt++; }
+  if (st == CS_SPACE) { spX0 = spIdleX(now); spTX = cnt ? sx / cnt : 64; }
+  if (st == CS_CAT && last >= 0) {
+    catX0 = catX;
+    float tx = PC_DX[last] + 11;
+    catHitDir = tx >= catX ? 1 : -1;
+    catSX = tx - catHitDir * 9;
+  }
+  if (st == CS_PONG) pgPlanMiss((ckChg[0] || ckChg[1]) ? 1 : 0, msLeft);
+}
+
+void ckUpdate(uint8_t st, uint32_t now) {
+  struct timeval tv; gettimeofday(&tv, nullptr);
+  struct tm tm; localtime_r(&tv.tv_sec, &tm);
+  int8_t nowD[4], nxt[4];
+  pcDigitsAt(tv.tv_sec, nowD);
+  pcDigitsAt(tv.tv_sec - tm.tm_sec + 60, nxt);
+  int32_t msToNext = (59 - tm.tm_sec) * 1000 + (999 - tv.tv_usec / 1000);
+  if (ckActive != st || since(ckLastDraw) > 2000 || ckShown[0] < 0) {
+    memcpy(ckShown, nowD, 4); ckActive = st; ckStyleReset(st);
+    ckLastStep = millis();
+  }
+  ckLastDraw = millis();
+  if (ckPhase == 0) {
+    if (pcDiff(nowD, ckShown)) ckStart(st, nowD, 1500, now);                   // Zeitsprung / Vorführung
+    else if (CK_OUT[st] && pcDiff(nxt, ckShown) && msToNext <= CK_OUT[st]) ckStart(st, nxt, msToNext, now);
+  }
+  uint32_t el = since(ckT0);
+  if (ckPhase == 1) {
+    bool outDone = (st == CS_PONG) ? pgOut : el >= CK_OUT[st];
+    if ((outDone && !pcDiff(nowD, ckTarget)) || el > CK_OUT[st] + 8000UL) {
+      memcpy(ckOld, ckShown, 4); memcpy(ckShown, ckTarget, 4);
+      ckPhase = 2; ckT0 = millis();
+      if (st == CS_CAT) { catMode = 1; catUntil = millis() + 2500; catDir = catHitDir; }
+      if (st == CS_PONG) { pgLose = -1; pgBall = false; pgServeAt = millis() + CK_IN[CS_PONG]; }
+    }
+  } else if (ckPhase == 2 && el >= CK_IN[st]) ckPhase = 0;
+  // Figuren bewegen (30-ms-Schritte)
+  uint8_t steps = 0;
+  while (since(ckLastStep) >= 30 && steps++ < 4) {
+    ckLastStep += 30;
+    if (st == CS_SNAKE) snStep();
+    else if (st == CS_CAT && ckPhase == 0) catStep();
+    else if (st == CS_PONG) pgStep();
+  }
+  if (steps >= 4) ckLastStep = millis();
+}
+
+uint8_t clockStyleNow() {
+  if (ckPreview >= 0 && ckPreview < CS_COUNT) return ckPreview;
+  if (cfg.clockStyle < CS_COUNT) return cfg.clockStyle;
+  if (timeValid()) {                                          // Wechselnd: jede Stunde ein anderes Design
+    time_t t = time(nullptr); struct tm tm; localtime_r(&t, &tm);
+    uint8_t want = (uint8_t)((tm.tm_yday * 24 + tm.tm_hour) % CS_COUNT);
+    bool visible = since(ckLastDraw) < 2000 || since(pcLastDraw) < 2000;
+    bool busy = visible && ((ckAuto == CS_PAC) ? (pacState == PAC_EAT || pcPop < 7) : ckPhase != 0);
+    if (want != ckAuto && !busy) ckAuto = want;
+  }
+  return ckAuto;
+}
+
+// Einstieg für Uhr-Bildschirm, Info-Folie und Nacht-Uhr
+void drawClock(uint32_t now, int ox, int oy) {
+  uint8_t st = clockStyleNow();
+  if (st == CS_PAC || !timeValid()) { ckActive = CS_PAC; drawPacClock(now, ox, oy); return; }
+  ckOX = ox; ckOY = oy;
+  ckUpdate(st, now);
+  switch (st) {
+    case CS_BLOCKS: blDraw(now); break;
+    case CS_SNAKE:  snDraw(now); break;
+    case CS_SPACE:  spDraw(now); break;
+    case CS_CAT:    catDrawAll(now); break;
+    case CS_FLIP:   flDraw(now); break;
+    case CS_PONG:   pgDraw(now); break;
+  }
+  ckOX = ckOY = 0;
+}
+
+// Vorführung: Ziffern-Wechsel sofort zeigen
+void clockDemo() {
+  uint8_t st = clockStyleNow();
+  if (st == CS_PAC) { pcDemo(); return; }
+  if (ckActive != st || ckShown[0] < 0) {
+    int8_t cur[4]; pcCurrent(cur); memcpy(ckShown, cur, 4);
+    ckActive = st; ckStyleReset(st); ckLastStep = millis();
+  }
+  for (int i = 0; i < 4; i++) ckShown[i] = (ckShown[i] + 3) % 10;
+  ckPhase = 0;
+  ckLastDraw = millis();
+}
+
 // =====================================================================
 //  Info-Folien
 // =====================================================================
@@ -1545,7 +2167,7 @@ void drawInfo(uint32_t now) {
       break;
     }
     case S_CLOCK:
-      drawPacClock(now, 0, 0);
+      drawClock(now, 0, 0);
       break;
     case S_EVENTS:
       slideHeader("Wecker & Termine");
@@ -1743,14 +2365,13 @@ void drawClockScreen(uint32_t now) {
     time_t t = time(nullptr); struct tm tm; localtime_r(&t, &tm);
     ox = (tm.tm_min % 3) - 1;
   }
-  drawPacClock(now, ox, oy);
+  drawClock(now, ox, oy);
 }
 
 
 // =====================================================================
 //  Wecker & Termine
 // =====================================================================
-const char* const WDAY_SHORT[7] = {"So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"};   // tm_wday
 const char* const REP_NAMES[5] = {"einmalig", "täglich", "wöchentlich", "monatlich", "jährlich"};
 
 // Tage seit 1970-01-01 (proleptischer gregorianischer Kalender, ohne Zeitzone)
@@ -2847,6 +3468,7 @@ void handleGetSettings() {
   j += ",\"sound\":" + String(B(cfg.sound));
   j += ",\"vibe\":" + String(B(cfg.vibe));
   j += ",\"pac_sound\":" + String(B(cfg.pacSound));
+  j += ",\"clock_style\":" + String(cfg.clockStyle);
   j += ",\"shake_on\":" + String(B(cfg.shakeOn));
   j += ",\"shake_sens\":" + String(cfg.shakeSens);
   j += ",\"cycle_mode\":" + String(cfg.cycleMode);
@@ -2912,6 +3534,7 @@ void handleSaveSettings() {
   argBool("sound", cfg.sound);
   argBool("vibe", cfg.vibe);
   argBool("pac_sound", cfg.pacSound);
+  if (server.hasArg("clock_style")) { cfg.clockStyle = constrain(server.arg("clock_style").toInt(), 0, CS_COUNT); ckPreview = -1; }
   argBool("shake_on", cfg.shakeOn);
   if (server.hasArg("shake_sens")) cfg.shakeSens = constrain(server.arg("shake_sens").toInt(), 1, 5);
   if (server.hasArg("cycle_mode"))  { cfg.cycleMode = constrain(server.arg("cycle_mode").toInt(), 0, 2); cycleLast = 0; }
@@ -3118,6 +3741,13 @@ void handleEventDel() {
   sendOk();
 }
 
+void clockArgs() {
+  if (!server.hasArg("style")) return;
+  int v = constrain((int)server.arg("style").toInt(), 0, CS_COUNT);
+  if (server.hasArg("save")) { cfg.clockStyle = v; saveSettings(); ckPreview = -1; }
+  else ckPreview = v < CS_COUNT ? v : -1;
+}
+
 uint32_t argMs(uint32_t def) { return server.hasArg("ms") ? (uint32_t)server.arg("ms").toInt() : def; }
 
 void setupServer() {
@@ -3163,8 +3793,9 @@ void setupServer() {
   server.on("/api/double", []() { gestureDouble(); sendOk(); });
   server.on("/api/long",   []() { gestureLong(); sendOk(); });
   server.on("/api/info",   []() { enterInfo(); sendOk(); });
-  server.on("/api/clock",  []() { showClock(); sendOk(); });
-  server.on("/api/clock/demo", []() { showClock(); pcDemo(); sendOk(); });
+  // ?style=0…7 zeigt ein Design als Vorschau (bis die Uhr geschlossen wird), &save=1 speichert es
+  server.on("/api/clock",  []() { clockArgs(); showClock(); sendOk(); });
+  server.on("/api/clock/demo", []() { clockArgs(); showClock(); clockDemo(); sendOk(); });
   server.on("/api/sleep",  []() { enterSleep(); sendOk(); });
   server.on("/api/wake",   []() { wakeUp(); if (mode != M_FACE) setEmotion(E_NEUTRAL, 0); sendOk(); });
   server.on("/api/vibrate", []() { vibrate(constrain((int)argMs(300), 10, 3000)); sendOk(); });
@@ -3284,7 +3915,11 @@ void handleSerialCmd(String line) {
   else if (cmd == "double") gestureDouble();
   else if (cmd == "long")   gestureLong();
   else if (cmd == "info")   enterInfo();
-  else if (cmd == "clock")  { showClock(); if (arg == "demo") pcDemo(); }
+  else if (cmd == "clock")  {
+    if (arg.length() && isDigit(arg[0])) { ckPreview = constrain((int)arg.toInt(), 0, CS_COUNT); if (ckPreview == CS_COUNT) ckPreview = -1; }
+    showClock();
+    if (arg.endsWith("demo")) clockDemo();
+  }
   else if (cmd == "sleep")  enterSleep();
   else if (cmd == "wake")   wakeUp();
   else if (cmd == "alarm" || cmd == "wecker") {
@@ -3322,7 +3957,7 @@ void handleSerialCmd(String line) {
   }
   else if (cmd == "help") {
     Serial.println("Befehle: emotion <name> [ms] | text <t> | loop <t> | show <t> | speed <1-10> | notify <t>");
-    Serial.println("         beep [f] | vibe [ms] | dim <1-100> | quiet on|off|auto|toggle | clock [demo]");
+    Serial.println("         beep [f] | vibe [ms] | dim <1-100> | quiet on|off|auto|toggle | clock [0-7] [demo]");
     Serial.println("         tap | double | long | shake | info | sleep | wake | portal | restart | status");
     Serial.println("         alarm [stop|snooze|test <i>|event <i>] | sound <0-10>");
     Serial.print("Emotionen:");
@@ -3499,6 +4134,7 @@ void loop() {
   }
   planLoop();
   ringLoop(now);
+  if (ckPreview >= 0 && mode != M_CLOCK && mode != M_MSG) ckPreview = -1;   // Vorschau endet mit der Uhr
   if (mode == M_FACE || mode == M_SLEEP) updateFace(now);
   else if (mode == M_ALARM || mode == M_EVENT) { Mode sv = mode; mode = M_FACE; updateFace(now); mode = sv; }
   updateBrightness();

@@ -31,8 +31,11 @@ Diese Kurzformen gehen auch: `happy`/`smile` → cute · `kiss` → kissou · `h
 | `/api/text` | `text`, `mode=once\|loop\|static`, `speed=1…10`, `ms` (bei static, Standard 15000, `0` = bis Tippen) | Text anzeigen |
 | `/api/notify` | `text` | Ton + Vibration + Lauftext |
 | `/api/info` | – | Info-Folien öffnen |
-| `/api/clock` | – | Pac-Man-Uhr zeigen (bis Doppeltipp) |
-| `/api/clock/demo` | – | Fress-Animation sofort vorführen |
+| `/api/clock` | `style=0…7` (optional), `save=1` | Uhr zeigen (bis Doppeltipp). Mit `style` als Vorschau in diesem Design, mit `save=1` dauerhaft. |
+| `/api/clock/demo` | `style=0…7` (optional) | Ziffern-Wechsel sofort vorführen |
+
+**Uhr-Designs (`style`):** `0` Pac-Man, `1` Fallende Blöcke, `2` Schlange, `3` Raumschiff, `4` Katze, `5` Klappzahlen,
+`6` Tischtennis, `7` Wechselnd (jede Stunde ein anderes)
 | `/api/dim` | `level=1…100`, `save=1` | Helligkeit in % (im Ruhemodus: Ruhemodus-Helligkeit) |
 | `/api/quiet` | `state=on\|off\|auto\|toggle` | Ruhemodus (`auto` = nach Zeitplan) |
 | `/api/beep` | `f` (Hz), `ms` | Ton |
@@ -91,7 +94,8 @@ Diese Kurzformen gehen auch: `happy`/`smile` → cute · `kiss` → kissou · `h
 | `city`, `lat`, `lon`, `tz` | Ort fürs Wetter, Zeitzone (POSIX-String) |
 | `sl_weather`, `sl_clock`, `sl_events`, `sl_wifi`, `sl_ip`, `sl_fw`, `lock_info` | Info-Folien, Doppeltipp sperren |
 | `alarm_max`, `ev_quiet` | Wecker klingelt höchstens so viele Minuten (1–60) · Termine im Ruhemodus mit Ton |
-| `sound`, `vibe`, `pac_sound` | Ton, Vibration, Waka-Waka zur vollen Stunde |
+| `sound`, `vibe`, `pac_sound` | Ton, Vibration, Uhr-Geräusche zur vollen Stunde |
+| `clock_style` | Uhr-Design 0–7 (siehe oben) |
 | `shake_on`, `shake_sens` | Neigungssensor an/aus, Empfindlichkeit 1–5 |
 | `cycle_mode`, `cycle_order`, `cycle_sec`, `emo_mask` | Auto-Wechsel (0 aus, 1 Durchlauf, 2 Leerlauf), Reihenfolge, Sekunden, Bitmaske der Emotionen |
 | `mq_speed` | Lauftext-Geschwindigkeit 1–10 |
@@ -112,7 +116,7 @@ Diese Kurzformen gehen auch: `happy`/`smile` → cute · `kiss` → kissou · `h
 ```
 emotion <name> [ms]     text <t>        loop <t>        show <t>        speed <1-10>
 notify <t>              beep [f]        vibe [ms]       dim <1-100>     quiet on|off|auto|toggle
-clock [demo]            cycle on|idle|off               tap   double   long   shake   rock
+clock [0-7] [demo]            cycle on|idle|off               tap   double   long   shake   rock
 info   sleep   wake   portal   restart   status   help
 alarm                   (Liste)         alarm stop      alarm snooze    alarm test <i>    alarm event <i>
 sound <0-10>            Melodie probehören

@@ -2,6 +2,21 @@
 
 Alle Versionen von PCBuddy. Die neueste steht oben.
 
+## v1.8.0
+
+- **6 neue Uhr-Designs** neben der Pac-Man-Uhr, alle mit eigener Animation zum Minutenwechsel:
+  - **Fallende Blöcke** – alte Blöcke fallen herunter, neue stapeln sich auf, unten wird eine Reihe abgeräumt
+  - **Schlange** – jagt Äpfel am Rand, frisst die alte Ziffer und zeichnet die neue Punkt für Punkt
+  - **Raumschiff** – schießt die alte Ziffer ab, die neue wird hereingebeamt; Sterne und Untertasse
+  - **Katze** – schubst die alte Ziffer vom Tisch, die neue hüpft herunter
+  - **Klappzahlen** – Fallblatt-Uhr mit Datum und Sekundenbalken
+  - **Tischtennis** – Ping-Pong mit der Uhrzeit als Spielstand, zum Minutenwechsel verpasst ein Schläger den Ball
+  - **Wechselnd** – jede Stunde ein anderes Design
+- Die neue Ziffer erscheint bei allen Designs genau zur vollen Minute. Das Design gilt für den Uhr-Bildschirm, die Info-Folie und die Nacht-Uhr im Ruhemodus.
+- Dashboard: Karte **Anzeige → Uhr** mit Design-Auswahl, Beschreibung und „Auf dem Display vorführen“ (Vorschau ohne Speichern).
+- „Waka-Waka“ heißt jetzt **Geräusche zur vollen Stunde** und gilt für alle Designs (Miau, Laser, Klack …).
+- API: `/api/clock?style=0…7` (Vorschau, mit `&save=1` speichern), `/api/clock/demo?style=…`, Einstellung `clock_style`; Seriell `clock <0-7> [demo]`.
+
 ## v1.7.1
 
 - **Test-Funktion für Wecker und Termine** ausgebaut: In der Liste hat jeder Eintrag einen **▶ Test**-Knopf.

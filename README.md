@@ -5,7 +5,7 @@
 </p>
 
 **PCBuddy** ist ein kleiner Schreibtisch-Begleiter mit animierten OLED-Augen. Er reagiert auf Berührung, Schütteln und
-Schaukeln, zeigt Uhrzeit (im Pac-Man-Stil), Wetter und Nachrichten, weckt dich und erinnert an Termine und lässt sich
+Schaukeln, zeigt die Uhrzeit (in 7 verspielten Designs), Wetter und Nachrichten, weckt dich und erinnert an Termine und lässt sich
 komplett über eine Web-Oberfläche im Heimnetz steuern. Auch Firmware-Updates gehen per WLAN.
 
 - **Board:** ESP32-C3 SuperMini
@@ -40,7 +40,7 @@ komplett über eine Web-Oberfläche im Heimnetz steuern. Auch Firmware-Updates g
 | **Auto-Wechsel** | Emotionen laufen von selbst durch, als Durchlauf oder ab und zu im Leerlauf. Welche dabei sind, ist wählbar. |
 | **Touch** | Tippen, Doppeltipp, 3× Tippen, langes Drücken (TTP223) |
 | **Bewegung** | Schütteln macht ihn wütend, langsames Schaukeln gibt ein „Uh“-Gesicht, lange schaukeln macht ihn schwindelig |
-| **Pac-Man-Uhr** | Ziffern aus Pellets. Pac-Man frisst kurz vor jedem Minutenwechsel genau die Ziffer, die sich ändert. |
+| **7 Uhr-Designs** | Pac-Man, Fallende Blöcke, Schlange, Raumschiff, Katze, Klappzahlen, Tischtennis – oder jede Stunde ein anderes. Die neue Ziffer kommt immer genau zur vollen Minute. |
 | **Wecker** | bis zu 8 Wecker mit Wochentagen, eigenem Gesicht, eigener Melodie, Vibration und Schlummern. Klingelt auch im Ruhemodus. |
 | **Termine** | bis zu 20 Termine, einmalig oder täglich/wöchentlich/monatlich/jährlich (Geburtstage), Erinnerung vorher, eigenes Gesicht und eigene Melodie |
 | **Info-Folien** | Wetter (Open-Meteo, ohne API-Key), Uhr, nächste Wecker & Termine, WLAN, IP-Adresse, Firmware |
@@ -63,6 +63,24 @@ komplett über eine Web-Oberfläche im Heimnetz steuern. Auch Firmware-Updates g
 Pac-Man läuft mit dem Geist auf einem Rundkurs über und unter den Ziffern, ohne sie zu berühren. **Erst 1–3 Sekunden vor
 dem Minutenwechsel** geht er in die Ziffern, die sich gleich ändern, und frisst sie. **Genau zur vollen Minute** erscheint
 die neue Zahl. Optional gibt es dazu „Waka-Waka“, aber nur zur vollen Stunde.
+
+### Weitere Uhr-Designs
+
+Im Dashboard unter **Anzeige → Uhr** wählbar, mit **▶ Auf dem Display vorführen** zum Ausprobieren. Alle Designs
+wechseln die Ziffer genau zur vollen Minute; mit *Geräusche zur vollen Stunde* gibt es je Design einen passenden Ton.
+
+| | |
+|---|---|
+| <img src="docs/img/uhr-bloecke.gif" width="300" alt="Fallende Blöcke"><br>**Fallende Blöcke** – die alten Blöcke fallen herunter, die neuen stapeln sich auf, unten wird eine Reihe abgeräumt | <img src="docs/img/uhr-schlange.gif" width="300" alt="Schlange"><br>**Schlange** – jagt am Rand Äpfel, frisst die alte Ziffer und zeichnet die neue |
+| <img src="docs/img/uhr-raumschiff.gif" width="300" alt="Raumschiff"><br>**Raumschiff** – schießt die alte Ziffer ab, die neue wird hereingebeamt; oben fliegt eine Untertasse vorbei | <img src="docs/img/uhr-katze.gif" width="300" alt="Katze"><br>**Katze** – spaziert herum, schubst die alte Ziffer vom Tisch und staunt, wenn die neue herunterhüpft |
+| <img src="docs/img/uhr-klappzahlen.gif" width="300" alt="Klappzahlen"><br>**Klappzahlen** – Fallblatt-Uhr mit Datum und Sekundenbalken | <img src="docs/img/uhr-tischtennis.gif" width="300" alt="Tischtennis"><br>**Tischtennis** – zwei Schläger spielen, die Uhrzeit ist der Spielstand; zum Minutenwechsel verpasst einer den Ball |
+
+Dazu **Wechselnd**: jede Stunde ein anderes Design.
+
+<details><summary>Alle Übergänge als Einzelbilder</summary>
+
+<img src="docs/img/uhren.png" alt="Je vier Einzelbilder pro Design rund um den Minutenwechsel" width="760">
+</details>
 
 ### Wecker & Termine
 <img src="docs/img/wecker.gif" alt="Wecker klingelt: Glocke mit Uhrzeit im Wechsel mit dem gewählten Gesicht" width="430">
@@ -241,7 +259,7 @@ Unter *Gesicht → Automatischer Wechsel* stellst du ein, dass sie von selbst du
 
 Läuft **nach Zeitplan** (z. B. 22:00–07:00, auch über Mitternacht) oder **manuell** per 3× Tippen. Dabei gilt eine eigene
 Helligkeit, Ton und Vibration sind aus. Nach 20 s ohne Berührung zeigt er wahlweise das gedimmte Gesicht, ein
-schlafendes Gesicht, die Pac-Man-Uhr oder schaltet das Display aus.
+schlafendes Gesicht, die Uhr (im gewählten Design) oder schaltet das Display aus.
 
 ### Text
 
@@ -358,14 +376,14 @@ BUDDY/
 └── LICENSE
 ```
 
-Der Code ist in Abschnitte gegliedert (Einstellungen, Ton, Display, Gesicht, Wetter, Pac-Man-Uhr, Info-Folien, Text,
+Der Code ist in Abschnitte gegliedert (Einstellungen, Ton, Display, Gesicht, Wetter, Pac-Man-Uhr, weitere Uhr-Designs, Info-Folien, Text,
 Gesten, Sensoren, Wecker & Termine, WLAN, Update, Web-Server, Seriell). Jeder Abschnitt ist auf Deutsch kommentiert.
 
 ---
 
 ## Änderungen
 
-Siehe [**CHANGELOG.md**](CHANGELOG.md). Aktuelle Version: **v1.7.1**.
+Siehe [**CHANGELOG.md**](CHANGELOG.md). Aktuelle Version: **v1.8.0**.
 
 ## Lizenz
 
