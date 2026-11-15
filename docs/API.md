@@ -73,7 +73,7 @@ Diese Kurzformen gehen auch: `happy`/`smile` → cute · `kiss` → kissou · `h
 | `/api/status` | GET | aktueller Zustand (siehe unten) |
 | `/api/settings` | GET | alle Einstellungen als JSON |
 | `/api/settings` | POST (Formular) | Einstellungen ändern. Nur die mitgeschickten Felder werden geändert. |
-| `/api/sensor` | GET | Live-Werte: Neigungskontakt, Wechsel/s, Touch |
+| `/api/sensor` | GET | Live-Werte: Neigungskontakt, Wechsel/s, Touch, gefilterte Touch-Störimpulse (`glitches`) |
 | `/api/scan` | GET | WLAN-Netze suchen (mehrfach abfragen, bis `status: done`) |
 | `/api/wifi` | POST | `ssid`, `pass`, `host`, `oled` speichern und neu starten |
 
@@ -93,6 +93,7 @@ Diese Kurzformen gehen auch: `happy`/`smile` → cute · `kiss` → kissou · `h
 | `quiet_bright`, `quiet_disp`, `quiet_mute`, `quiet_novibe` | Ruhemodus: Helligkeit, Anzeige (0 Gesicht, 1 Schlaf, 2 Uhr, 3 aus), Ton aus, Vibration aus |
 | `city`, `lat`, `lon`, `tz` | Ort fürs Wetter, Zeitzone (POSIX-String) |
 | `sl_weather`, `sl_clock`, `sl_events`, `sl_wifi`, `sl_ip`, `sl_fw`, `lock_info` | Info-Folien, Doppeltipp sperren |
+| `info_auto` | Info-Folien nach so vielen Minuten automatisch schließen (0 = nie) |
 | `alarm_max`, `ev_quiet` | Wecker klingelt höchstens so viele Minuten (1–60) · Termine im Ruhemodus mit Ton |
 | `sound`, `vibe`, `pac_sound` | Ton, Vibration, Uhr-Geräusche zur vollen Stunde |
 | `clock_style` | Uhr-Design 0–7 (siehe oben) |

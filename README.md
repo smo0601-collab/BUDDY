@@ -352,6 +352,7 @@ Invoke-RestMethod "http://pcbuddy.local/api/notify?text=Kaffee%20ist%20fertig"
 | `pcbuddy.local` geht nicht | Die IP-Adresse aus dem Display oder der Info-Folie verwenden (manche Android-Geräte können kein `.local`) |
 | 1,3"-Display geht beim Piepen aus | Die Firmware stellt es automatisch wieder her. Dauerhaft besser: 100 Ω vor den Buzzer, Kondensator ans Display, Display an 5V. |
 | Neigungssensor reagiert falsch | *Anzeige → Sensor-Test (live)* ansehen. SW-520D senkrecht einbauen, Empfindlichkeit anpassen. |
+| Info-Folie geht von selbst an | Ab v1.8.1 werden Touch-Störimpulse gefiltert. Passiert es weiter: im Sensor-Test (*Anzeige*) die Zahl der Störimpulse beobachten, das Touch-Kabel kurz halten und weg vom Motor führen, einen 100-nF-Kondensator an VCC/GND des TTP223 setzen. Notfalls *Info-Folien automatisch schließen* einstellen. |
 | Keine serielle Ausgabe | **USB CDC On Boot: Enabled** einstellen |
 | Wecker klingelt nicht | Im Dashboard unter *Wecker & Termine* prüfen, ob „nächster: …“ angezeigt wird. Steht oben ein Hinweis zur Uhrzeit, fehlt die Internet-Zeit (NTP). Mit *Testen* Ton und Gesicht prüfen. |
 
@@ -383,7 +384,7 @@ Gesten, Sensoren, Wecker & Termine, WLAN, Update, Web-Server, Seriell). Jeder Ab
 
 ## Änderungen
 
-Siehe [**CHANGELOG.md**](CHANGELOG.md). Aktuelle Version: **v1.8.0**.
+Siehe [**CHANGELOG.md**](CHANGELOG.md). Aktuelle Version: **v1.8.1**.
 
 ## Lizenz
 

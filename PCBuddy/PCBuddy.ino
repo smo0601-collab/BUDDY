@@ -55,6 +55,7 @@ struct Settings {
   float   lat = DEFAULT_LAT, lon = DEFAULT_LON;
   bool slWeather = true, slClock = true, slWifi = true, slIp = true, slFw = true;
   bool lockInfo = false;
+  uint8_t infoAuto = 0;              // Info-Folien nach so vielen Minuten schließen (0 = nie)
   bool sound = true, vibe = true;
   bool pacSound = false;             // Uhr-Geräusche zur vollen Stunde (Waka-Waka, Miau …)
   uint8_t clockStyle = 0;            // Uhr-Design (CS_…), CS_COUNT = jede Stunde wechselnd
@@ -183,6 +184,14 @@ volatile uint32_t wxLast = 0;
 bool     tState = false, longFired = false, setupFired = false;
 uint32_t tChange = 0, tPressAt = 0, tReleaseAt = 0;
 uint8_t  tapCount = 0;
+bool     tRawLast = false, tIgnore = false;   // tIgnore: Berührung begann während Motor/Summer -> nicht werten
+uint32_t tRawSince = 0;
+uint32_t touchQuietUntil = 0;               // so lange gelten neue Berührungen als Störung
+uint32_t touchGlitches = 0;                 // gefilterte Störimpulse (Diagnose)
+uint32_t infoOpenedAt = 0;
+const char* infoSource = "";                // wodurch die Info-Folien zuletzt geöffnet wurden
+#define TOUCH_STABLE_MS 25                  // Pegel muss so lange stabil sein
+#define TAP_MIN_MS      40                  // kürzere "Berührungen" sind Störimpulse
 
 // ---- Ton & Vibration ----
 Note     nq[10];
@@ -321,6 +330,7 @@ void loadSettings() {
   cfg.slIp        = prefs.getBool("slIp", true);
   cfg.slFw        = prefs.getBool("slFw", true);
   cfg.lockInfo    = prefs.getBool("lockInfo", false);
+  cfg.infoAuto    = prefs.getUChar("infoAuto", 0);
   cfg.sound       = prefs.getBool("sound", true);
   cfg.vibe        = prefs.getBool("vibe", true);
   cfg.pacSound    = prefs.getBool("pacSound", false);
@@ -365,6 +375,7 @@ void saveSettings() {
   prefs.putBool("slIp", cfg.slIp);
   prefs.putBool("slFw", cfg.slFw);
   prefs.putBool("lockInfo", cfg.lockInfo);
+  prefs.putUChar("infoAuto", cfg.infoAuto);
   prefs.putBool("sound", cfg.sound);
   prefs.putBool("vibe", cfg.vibe);
   prefs.putBool("pacSound", cfg.pacSound);
@@ -520,6 +531,7 @@ void vibrate(uint16_t ms) {
   digitalWrite(PIN_VIBRO, HIGH);
   vibeOff = millis() + ms;
   vibeQuietUntil = vibeOff + 300;                       // Motor schüttelt den Neigungssensor mit
+  if ((int32_t)(vibeOff + 200 - touchQuietUntil) > 0) touchQuietUntil = vibeOff + 200;   // … und stört den Touch
 }
 
 void vibeRaw(uint16_t ms) {        // Vibration ohne Ruhemodus-Prüfung (Wecker)
@@ -527,6 +539,7 @@ void vibeRaw(uint16_t ms) {        // Vibration ohne Ruhemodus-Prüfung (Wecker)
   digitalWrite(PIN_VIBRO, HIGH);
   vibeOff = millis() + ms;
   vibeQuietUntil = vibeOff + 300;
+  if ((int32_t)(vibeOff + 200 - touchQuietUntil) > 0) touchQuietUntil = vibeOff + 200;
 }
 
 void vibeLoop() {
@@ -591,6 +604,7 @@ void applyDimMask() {
 // Deshalb: nach Ton/Vibration und regelmäßig die Original-Initialisierung neu senden.
 void scheduleHeal(uint32_t inMs) {
   uint32_t t = millis() + inMs;
+  if ((int32_t)(t + 60 - touchQuietUntil) > 0) touchQuietUntil = t + 60;   // Summer kann den Touch-Sensor stören
   if (!healAt || (int32_t)(t - healAt) > 0) healAt = t;
 }
 
@@ -2121,6 +2135,10 @@ void buildSlides() {
 }
 
 void enterInfo() {
+  if (!*infoSource) infoSource = "API/Seriell";
+  Serial.printf("[Info] geöffnet durch %s\n", infoSource);
+  infoSource = "";
+  infoOpenedAt = millis();
   buildSlides();
   slideIdx = 0;
   mode = M_INFO;
@@ -3045,23 +3063,36 @@ uint8_t tiltEdgesLastSecond() {
   return n;
 }
 
+// Touch-Auswertung mit Störfilter:
+//  - ein Pegelwechsel zählt erst, wenn er TOUCH_STABLE_MS lang stabil ist
+//  - Berührungen kürzer als TAP_MIN_MS sind Störimpulse (zählen nicht als Tippen)
+//  - Berührungen, die beginnen, während der eigene Motor oder Summer läuft, werden ignoriert
+//    (außer beim Klingeln – da muss Tippen immer gehen)
 void pollTouch() {
   if (PIN_TOUCH < 0 || mode == M_UPDATE) return;
   uint32_t now = millis();
   bool raw = digitalRead(PIN_TOUCH) == (TOUCH_ACTIVE_HIGH ? HIGH : LOW);
-  if (raw != tState && now - tChange > 20) {
+  if (raw != tRawLast) { tRawLast = raw; tRawSince = now; }
+  if (raw != tState && now - tRawSince >= TOUCH_STABLE_MS) {
     tState = raw; tChange = now;
     if (raw) {
-      tPressAt = now; longFired = false; setupFired = false;
+      tPressAt = tRawSince; longFired = false; setupFired = false;
+      tIgnore = !ringing() && (int32_t)(tRawSince - touchQuietUntil) < 0;
+      if (tIgnore) { touchGlitches++; Serial.println("[Touch] ignoriert (Motor/Summer aktiv)"); }
     } else {
-      if (!longFired && now - tPressAt < LONG_PRESS_MS) { tapCount++; tReleaseAt = now; }
+      uint32_t dur = tRawSince - tPressAt;
+      if (!tIgnore && !longFired) {
+        if (dur >= TAP_MIN_MS) { tapCount++; tReleaseAt = tRawSince; }
+        else { touchGlitches++; Serial.printf("[Touch] Störimpuls %u ms ignoriert\n", (unsigned)dur); }
+      }
+      tIgnore = false;
     }
   }
-  if (tState && !longFired && now - tPressAt >= LONG_PRESS_MS) {
+  if (tState && !tIgnore && !longFired && now - tPressAt >= LONG_PRESS_MS) {
     longFired = true; tapCount = 0;
     gestureLong();
   }
-  if (tState && !setupFired && now - tPressAt >= SETUP_PRESS_MS) {
+  if (tState && !tIgnore && !setupFired && now - tPressAt >= SETUP_PRESS_MS) {
     setupFired = true;
     if (portalActive) stopPortal(); else startPortal();
   }
@@ -3070,7 +3101,7 @@ void pollTouch() {
     uint8_t n = tapCount;
     tapCount = 0;
     if (n >= 3) gestureTriple();
-    else if (n == 2) gestureDouble();
+    else if (n == 2) { infoSource = "Doppeltipp"; gestureDouble(); }
     else gestureTap();
   }
 }
@@ -3465,6 +3496,7 @@ void handleGetSettings() {
   j += ",\"sl_ip\":" + String(B(cfg.slIp));
   j += ",\"sl_fw\":" + String(B(cfg.slFw));
   j += ",\"lock_info\":" + String(B(cfg.lockInfo));
+  j += ",\"info_auto\":" + String(cfg.infoAuto);
   j += ",\"sound\":" + String(B(cfg.sound));
   j += ",\"vibe\":" + String(B(cfg.vibe));
   j += ",\"pac_sound\":" + String(B(cfg.pacSound));
@@ -3531,6 +3563,7 @@ void handleSaveSettings() {
   argBool("sl_ip", cfg.slIp);
   argBool("sl_fw", cfg.slFw);
   argBool("lock_info", cfg.lockInfo);
+  if (server.hasArg("info_auto")) cfg.infoAuto = constrain(server.arg("info_auto").toInt(), 0, 120);
   argBool("sound", cfg.sound);
   argBool("vibe", cfg.vibe);
   argBool("pac_sound", cfg.pacSound);
@@ -3787,6 +3820,7 @@ void setupServer() {
                ",\"edges\":" + String((unsigned long)tiltEdgeTotal) +
                ",\"per_sec\":" + String(tiltEdgesLastSecond()) +
                ",\"touch\":" + String(tState ? 1 : 0) +
+               ",\"glitches\":" + String((unsigned long)touchGlitches) +
                ",\"last\":\"" + String(since(lastShake) < 4000 ? "schuetteln" : since(lastRock) < 4000 ? "schaukeln" : "") + "\"}";
     sendJson(j);
   });
@@ -4041,7 +4075,8 @@ void setup() {
   delay(50);
   Serial.println("\n[PCBuddy] v" FW_VERSION);
 
-  if (PIN_TOUCH >= 0)  pinMode(PIN_TOUCH, TOUCH_ACTIVE_HIGH ? INPUT : INPUT_PULLUP);
+  // Pulldown: ist der Sensor lose oder die Leitung offen, gibt es keine Geister-Berührungen
+  if (PIN_TOUCH >= 0)  pinMode(PIN_TOUCH, TOUCH_ACTIVE_HIGH ? INPUT_PULLDOWN : INPUT_PULLUP);
   if (PIN_TILT >= 0)   {
     pinMode(PIN_TILT, INPUT_PULLUP);
     tiltState = digitalRead(PIN_TILT) == HIGH;
@@ -4135,6 +4170,10 @@ void loop() {
   planLoop();
   ringLoop(now);
   if (ckPreview >= 0 && mode != M_CLOCK && mode != M_MSG) ckPreview = -1;   // Vorschau endet mit der Uhr
+  if (mode == M_INFO && cfg.infoAuto && since(infoOpenedAt) > cfg.infoAuto * 60000UL) {
+    Serial.println("[Info] automatisch geschlossen");
+    setEmotion(E_NEUTRAL, 0, false);
+  }
   if (mode == M_FACE || mode == M_SLEEP) updateFace(now);
   else if (mode == M_ALARM || mode == M_EVENT) { Mode sv = mode; mode = M_FACE; updateFace(now); mode = sv; }
   updateBrightness();

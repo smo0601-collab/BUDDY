@@ -4,7 +4,7 @@
 //  ESP32-C3 SuperMini + OLED 128x64 (0,96" SSD1306 oder 1,3" SH1106)
 // =====================================================================
 
-#define FW_VERSION      "1.8.0"
+#define FW_VERSION      "1.8.1"
 #define DEVICE_NAME     "PCBuddy"
 
 // ---------- I2C OLED ----------

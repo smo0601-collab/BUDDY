@@ -2,6 +2,17 @@
 
 Alle Versionen von PCBuddy. Die neueste steht oben.
 
+## v1.8.1
+
+- **Behoben: Info-Folie (Wetter) ging manchmal von selbst an und blieb stehen.** Ursache: Die Touch-Auswertung hat schon
+  kurze Störimpulse des TTP223 als Tippen gezählt – zwei davon kurz hintereinander ergaben einen „Doppeltipp“.
+  Störimpulse entstehen vor allem, wenn der Vibrationsmotor oder der Summer läuft.
+  - Ein Touch-Signal zählt erst, wenn es 25 ms stabil ist, und erst ab 40 ms Berührung als Tippen.
+  - Berührungen, die beginnen, während der eigene Motor oder Summer läuft, werden ignoriert (außer beim Klingeln des Weckers).
+  - Interner Pulldown am Touch-Eingang: ein loser Sensor erzeugt keine Geister-Berührungen mehr.
+- Neu: **Info-Folien automatisch schließen** (Anzeige → Info-Folien: nie, 1, 5, 15 oder 60 Minuten; Standard „nie“).
+- Sensor-Test im Dashboard zeigt die Zahl der **gefilterten Störimpulse**; im seriellen Monitor steht, wodurch die Info geöffnet wurde.
+
 ## v1.8.0
 
 - **6 neue Uhr-Designs** neben der Pac-Man-Uhr, alle mit eigener Animation zum Minutenwechsel:

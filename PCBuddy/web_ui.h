@@ -260,7 +260,8 @@ const char DASH_HTML[] PROGMEM = R"HTML(<!doctype html><html lang="de"><head><me
 <label class="tg"><span>WLAN</span><input type="checkbox" name="sl_wifi"></label>
 <label class="tg"><span>IP-Adresse</span><input type="checkbox" name="sl_ip"></label>
 <label class="tg"><span>Firmware</span><input type="checkbox" name="sl_fw"></label>
-<label class="tg"><span>Info per Doppeltipp sperren</span><input type="checkbox" name="lock_info"></label></div>
+<label class="tg"><span>Info per Doppeltipp sperren</span><input type="checkbox" name="lock_info"></label>
+<label>Info-Folien automatisch schließen</label><select name="info_auto"><option value="0">nie (bis Doppeltipp)</option><option value="1">nach 1 Minute</option><option value="5">nach 5 Minuten</option><option value="15">nach 15 Minuten</option><option value="60">nach 1 Stunde</option></select></div>
 <div class="card"><h2>Ton, Vibration, Sensoren</h2>
 <label class="tg"><span>Ton</span><input type="checkbox" name="sound"></label>
 <label class="tg"><span>Vibration</span><input type="checkbox" name="vibe"></label>
@@ -269,7 +270,7 @@ const char DASH_HTML[] PROGMEM = R"HTML(<!doctype html><html lang="de"><head><me
 <label>Auto-Schlaf nach</label><select name="sleep_min"><option value="0">nie</option><option value="2">2 min</option><option value="5">5 min</option><option value="10">10 min</option><option value="30">30 min</option><option value="60">60 min</option></select></div>
 <div class="card"><h2>Sensor-Test (live)</h2><div class="kv">
 <b>Neigungskontakt</b><span id="sn_tilt">–</span><b>Wechsel pro Sekunde</b><span id="sn_ps">–</span>
-<b>Wechsel gesamt</b><span id="sn_tot">–</span><b>Touch (GPIO 7)</b><span id="sn_touch">–</span><b>Erkannt</b><span id="sn_last">–</span></div>
+<b>Wechsel gesamt</b><span id="sn_tot">–</span><b>Touch (GPIO 7)</b><span id="sn_touch">–</span><b>Störimpulse gefiltert</b><span id="sn_gl">–</span><b>Erkannt</b><span id="sn_last">–</span></div>
 <p class="hint">Kippen: Der Kontakt sollte zwischen „geschlossen“ und „offen“ wechseln (SW-520D schaltet erst ab ca. 30–45° Neigung). Beim Schütteln sollten mehrere Wechsel pro Sekunde erscheinen. Wechselt nichts, prüfe die Verdrahtung: ein Pin an GPIO 1, der andere an GND.</p></div>
 </section>
 
@@ -556,7 +557,7 @@ $('#mq').addEventListener('keydown',e=>{if(e.key==='Enter')sendText('text')});$(
 // ---- Live-Sensor-Test (nur wenn der Tab "Anzeige" offen ist) ----
 async function sensor(){if(curTab()!=='disp'||document.hidden)return;try{const s=await (await fetch('/api/sensor',{cache:'no-store'})).json();
  $('#sn_tilt').textContent=s.tilt<0?'nicht konfiguriert':(s.tilt?'offen (gekippt / HIGH)':'geschlossen (aufrecht / LOW)');
- $('#sn_ps').textContent=s.per_sec;$('#sn_tot').textContent=s.edges;$('#sn_touch').textContent=s.touch?'berührt':'–';
+ $('#sn_ps').textContent=s.per_sec;$('#sn_tot').textContent=s.edges;$('#sn_touch').textContent=s.touch?'berührt':'–';$('#sn_gl').textContent=s.glitches??'–';
  $('#sn_last').textContent=s.last==='schuetteln'?'Schütteln!':s.last==='schaukeln'?'Schaukeln (Uh)':'–'}catch(e){}}
 setInterval(sensor,300);
 showTab(curTab());window.addEventListener('hashchange',()=>showTab(curTab()));
