@@ -4,6 +4,9 @@ Alle Aktionen funktionieren per **GET oder POST**. Antwort ist JSON, meist `{"ok
 Basis-Adresse: `http://pcbuddy.local` (oder die IP-Adresse). CORS ist freigegeben, die Aufrufe gehen also auch aus
 eigenen Webseiten.
 
+**Anmeldung:** Ist ein Dashboard-Passwort gesetzt, braucht jeder Aufruf HTTP-Basic-Auth mit Benutzer `admin`,
+z. B. `curl -u admin:PASSWORT "http://pcbuddy.local/api/status"`. Ohne Anmeldung antwortet das Gerät mit `401`.
+
 ## Gesicht & Gesten
 
 | Endpunkt | Parameter | Wirkung |
@@ -75,11 +78,12 @@ Diese Kurzformen gehen auch: `happy`/`smile` → cute · `kiss` → kissou · `h
 | `/api/settings` | POST (Formular) | Einstellungen ändern. Nur die mitgeschickten Felder werden geändert. |
 | `/api/sensor` | GET | Live-Werte: Neigungskontakt, Wechsel/s, Touch, gefilterte Touch-Störimpulse (`glitches`) |
 | `/api/scan` | GET | WLAN-Netze suchen (mehrfach abfragen, bis `status: done`) |
-| `/api/wifi` | POST | `ssid`, `pass`, `host`, `oled` speichern und neu starten |
+| `/api/wifi` | POST | `ssid`, `pass`, `host`, `oled`, optional `webpw` (Dashboard-Passwort, leer = unverändert) bzw. `webpw_clear=1` speichern und neu starten |
+| `/api/webpw` | POST | `pw` = neues Dashboard-Passwort (4–32 Zeichen), leer = Passwort entfernen |
 
 **`/api/status` liefert:** `name`, `fw`, `host`, `ip`, `ssid`, `rssi`, `mode`, `emotion`, `portal`, `quiet`,
 `quiet_mode`, `cycle`, `bright`, `oled`, `uptime`, `heap`, `ota`, `part`, `upd_pw`, `wifi_reconnects`, `wifi_reason`,
-`city`, `ringing` (`alarm`, `event` oder leer), `ring_test`, `next_alarm` (z. B. `morgen 07:30`), `time`, `wx` (`temp`, `code`, `hum`, `wind`, `text`)
+`web_pw`, `city`, `ringing` (`alarm`, `event` oder leer), `ring_test`, `next_alarm` (z. B. `morgen 07:30`), `time`, `wx` (`temp`, `code`, `hum`, `wind`, `text`)
 
 **Felder für `/api/settings`:**
 
@@ -121,6 +125,7 @@ clock [0-7] [demo]            cycle on|idle|off               tap   double   lon
 info   sleep   wake   portal   restart   status   help
 alarm                   (Liste)         alarm stop      alarm snooze    alarm test <i>    alarm event <i>
 sound <0-10>            Melodie probehören
+passwort <neu>          Dashboard-Passwort setzen    passwort aus    Passwort entfernen
 ```
 
 ## Beispiele

@@ -42,6 +42,7 @@
 struct Settings {
   String ssid, pass, host, tz, city;
   String updPw;                      // optionales Passwort für Updates per WLAN
+  String webPw;                      // Dashboard-Passwort für Benutzer "admin" (leer = kein Login)
   uint8_t oled = 0;          // 0 = 0,96" SSD1306, 1 = 1,3" SH1106
   bool    flip = false;
   uint8_t bright = 80;       // Helligkeit 1..100 %
@@ -312,6 +313,7 @@ void loadSettings() {
   cfg.tz          = prefs.getString("tz", DEFAULT_TZ);
   cfg.city        = prefs.getString("city", DEFAULT_CITY);
   cfg.updPw       = prefs.getString("updPw", "");
+  cfg.webPw       = prefs.getString("webPw", "");
   cfg.oled        = prefs.getUChar("oled", 0);
   cfg.flip        = prefs.getBool("flip", false);
   cfg.bright      = constrain(prefs.getUChar("bright", 80), 1, 100);
@@ -357,6 +359,7 @@ void saveSettings() {
   prefs.putString("tz", cfg.tz);
   prefs.putString("city", cfg.city);
   prefs.putString("updPw", cfg.updPw);
+  prefs.putString("webPw", cfg.webPw);
   prefs.putUChar("oled", cfg.oled);
   prefs.putBool("flip", cfg.flip);
   prefs.putUChar("bright", cfg.bright);
@@ -3158,6 +3161,41 @@ void updateScreenNow() {           // während des Updates direkt zeichnen (loop
   d->clearBuffer(); drawUpdate(); d->sendBuffer();
 }
 
+// ---- Dashboard-Anmeldung (HTTP Basic Auth, Benutzer "admin") ----
+#define WEB_USER "admin"
+const String& otaPw() { return cfg.updPw.length() ? cfg.updPw : cfg.webPw; }   // Arduino-IDE-Update
+void otaPwChanged() {
+  if (otaStarted) ArduinoOTA.setPassword(otaPw().length() ? otaPw().c_str() : nullptr);
+  if (wifiOk()) startMdns();
+}
+bool isPortalRequest();
+// Im Setup-Portal (offenes PCBuddy-Setup-WLAN, startet nur ohne WLAN-Daten oder nach 5 s Touch)
+// sind diese Seiten ohne Anmeldung erreichbar – so lässt sich ein vergessenes Passwort am Gerät neu setzen.
+bool portalFree() {
+  if (!isPortalRequest()) return false;
+  String u = server.uri();
+  return u == "/" || u == "/setup" || u == "/api/scan" || u == "/api/wifi" || u == "/api/status" ||
+         (u == "/api/settings" && server.method() == HTTP_GET);
+}
+bool webAuthed() {
+  if (!cfg.webPw.length() || server.method() == HTTP_OPTIONS || portalFree()) return true;
+  return server.authenticate(WEB_USER, cfg.webPw.c_str());
+}
+bool authOk() {                                // false = Anmeldung angefordert (401 gesendet)
+  if (webAuthed()) return true;
+  server.requestAuthentication(BASIC_AUTH, DEVICE_NAME, "{\"ok\":false,\"err\":\"Anmeldung erforderlich\"}");
+  return false;
+}
+void webOn(const char* uri, WebServer::THandlerFunction fn) {
+  server.on(uri, [fn]() { if (authOk()) fn(); });
+}
+void webOn(const char* uri, HTTPMethod m, WebServer::THandlerFunction fn) {
+  server.on(uri, m, [fn]() { if (authOk()) fn(); });
+}
+void webOn(const char* uri, HTTPMethod m, WebServer::THandlerFunction fn, WebServer::THandlerFunction up) {
+  server.on(uri, m, [fn]() { if (authOk()) fn(); }, up);
+}
+
 bool updPwOk() { return !cfg.updPw.length() || server.arg("pw") == cfg.updPw; }
 
 void handleUpdateUpload() {
@@ -3166,6 +3204,7 @@ void handleUpdateUpload() {
     updErr = ""; updOk = false; updPct = 0; updDone = 0;
     updSize = server.hasArg("size") ? server.arg("size").toInt() : 0;
     mode = M_UPDATE; quietScreen = false;
+    if (!webAuthed()) { updErr = "Nicht angemeldet"; return; }
     if (!updPwOk()) { updErr = "Falsches Passwort"; return; }
     if (!otaPossible()) { updErr = "Kein Update-Bereich: einmal per USB mit 'Minimal SPIFFS (1.9MB APP with OTA/128KB SPIFFS)' flashen"; return; }
     Serial.printf("[Update] Start: %s (%lu Bytes)\n", up.filename.c_str(), (unsigned long)updSize);
@@ -3216,7 +3255,7 @@ void startArduinoOta() {
   if (otaStarted || !otaPossible()) return;
   ArduinoOTA.setHostname(cfg.host.c_str());
   ArduinoOTA.setMdnsEnabled(false);                       // mDNS machen wir selbst (s. startMdns)
-  if (cfg.updPw.length()) ArduinoOTA.setPassword(cfg.updPw.c_str());
+  if (otaPw().length()) ArduinoOTA.setPassword(otaPw().c_str());
   ArduinoOTA.onStart([]() { mode = M_UPDATE; updErr = ""; updOk = false; updPct = 0; updateScreenNow(); });
   ArduinoOTA.onProgress([](unsigned int p, unsigned int t) {
     uint8_t pct = t ? p * 100ULL / t : 0;
@@ -3233,7 +3272,7 @@ void startMdns() {
   MDNS.end();
   if (MDNS.begin(cfg.host.c_str())) {
     MDNS.addService("http", "tcp", 80);
-    if (otaPossible()) MDNS.enableArduino(3232, cfg.updPw.length() > 0);   // Netzwerk-Port in der Arduino IDE
+    if (otaPossible()) MDNS.enableArduino(3232, otaPw().length() > 0);   // Netzwerk-Port in der Arduino IDE
     mdnsStarted = true;
     Serial.printf("[mDNS] http://%s.local\n", cfg.host.c_str());
   }
@@ -3450,6 +3489,7 @@ void handleStatus() {
   j += ",\"wifi_reason\":" + String((int)wifiLastReason);
   j += ",\"part\":\"" + String(runningPartition()) + "\"";
   j += ",\"upd_pw\":" + String(cfg.updPw.length() ? "true" : "false");
+  j += ",\"web_pw\":" + String(cfg.webPw.length() ? "true" : "false");
   j += ",\"city\":\"" + jsonEsc(cfg.city) + "\"";
   j += ",\"ringing\":\"" + String(ringKind == 1 ? "alarm" : ringKind == 2 ? "event" : "") + "\"";
   j += ",\"ring_test\":" + String(ringing() && ringTest ? "true" : "false");
@@ -3473,6 +3513,7 @@ void handleGetSettings() {
   auto B = [](bool v) { return v ? "true" : "false"; };
   char hm[8];
   j += "{\"ssid\":\"" + jsonEsc(cfg.ssid) + "\"";
+  j += ",\"web_pw\":" + String(cfg.webPw.length() ? "true" : "false");
   j += ",\"host\":\"" + jsonEsc(cfg.host) + "\"";
   j += ",\"city\":\"" + jsonEsc(cfg.city) + "\"";
   j += ",\"tz\":\"" + jsonEsc(cfg.tz) + "\"";
@@ -3582,7 +3623,7 @@ void handleSaveSettings() {
   if (server.hasArg("upd_pw")) {                          // leer = kein Passwort
     String pw = server.arg("upd_pw");
     if (pw.length() > 32) pw = pw.substring(0, 32);
-    if (pw != cfg.updPw) { cfg.updPw = pw; if (otaStarted) ArduinoOTA.setPassword(cfg.updPw.length() ? cfg.updPw.c_str() : nullptr); if (wifiOk()) startMdns(); }
+    if (pw != cfg.updPw) { cfg.updPw = pw; otaPwChanged(); }
   }
   saveSettings();
   if (locChange) { wxValid = false; wxForce = true; }
@@ -3623,6 +3664,10 @@ void handleWifiSave() {
   cfg.pass = pass;
   if (server.hasArg("host")) cfg.host = sanitizeHost(server.arg("host"));
   if (server.hasArg("oled")) cfg.oled = server.arg("oled").toInt() == 1 ? 1 : 0;
+  String wp = server.arg("webpw");
+  if (wp.length() && (wp.length() < 4 || wp.length() > 32)) { sendJson("{\"ok\":false,\"err\":\"Dashboard-Passwort: 4 bis 32 Zeichen\"}", 400); return; }
+  if (wp.length()) cfg.webPw = wp;                       // leer = unverändert (bei Ersteinrichtung: keins)
+  else if (server.arg("webpw_clear") == "1") cfg.webPw = "";
   saveSettings();
   sendJson("{\"ok\":true,\"host\":\"" + jsonEsc(cfg.host) + "\"}");
   showMsg("Gespeichert", "Neustart...", cfg.ssid, 5000);
@@ -3785,25 +3830,25 @@ uint32_t argMs(uint32_t def) { return server.hasArg("ms") ? (uint32_t)server.arg
 
 void setupServer() {
   server.enableCORS(true);
-  server.on("/", HTTP_GET, handleRoot);
-  server.on("/dashboard", HTTP_GET, []() { server.send_P(200, "text/html", DASH_HTML); });
-  server.on("/setup", HTTP_GET, []() { server.send_P(200, "text/html", PORTAL_HTML); });
-  server.on("/api/status", HTTP_GET, handleStatus);
-  server.on("/api/settings", HTTP_GET, handleGetSettings);
-  server.on("/api/settings", HTTP_POST, handleSaveSettings);
-  server.on("/api/scan", HTTP_GET, handleScan);
-  server.on("/api/wifi", HTTP_POST, handleWifiSave);
+  webOn("/", HTTP_GET, handleRoot);
+  webOn("/dashboard", HTTP_GET, []() { server.send_P(200, "text/html", DASH_HTML); });
+  webOn("/setup", HTTP_GET, []() { server.send_P(200, "text/html", PORTAL_HTML); });
+  webOn("/api/status", HTTP_GET, handleStatus);
+  webOn("/api/settings", HTTP_GET, handleGetSettings);
+  webOn("/api/settings", HTTP_POST, handleSaveSettings);
+  webOn("/api/scan", HTTP_GET, handleScan);
+  webOn("/api/wifi", HTTP_POST, handleWifiSave);
 
-  server.on("/api/emotion", []() {
+  webOn("/api/emotion", []() {
     int e = parseEmotion(server.arg("name"));
     if (e < 0) { sendJson("{\"ok\":false,\"err\":\"unbekannte Emotion\"}", 400); return; }
     setEmotion((Emotion)e, argMs(10000));
     sendOk();
   });
-  server.on("/api/tap",    []() { gestureTap(); sendOk(); });
-  server.on("/api/shake",  []() { onShake(); sendOk(); });
-  server.on("/api/rock",   []() { onRock(); sendOk(); });
-  server.on("/api/cycle",  []() {                   // ?mode=off|run|idle  [&sec=6] [&order=seq|random]
+  webOn("/api/tap",    []() { gestureTap(); sendOk(); });
+  webOn("/api/shake",  []() { onShake(); sendOk(); });
+  webOn("/api/rock",   []() { onRock(); sendOk(); });
+  webOn("/api/cycle",  []() {                   // ?mode=off|run|idle  [&sec=6] [&order=seq|random]
     String m = server.arg("mode");
     if (m == "off" || m == "0") cfg.cycleMode = 0;
     else if (m == "idle" || m == "2") cfg.cycleMode = 2;
@@ -3815,7 +3860,7 @@ void setupServer() {
     saveSettings();
     sendJson("{\"ok\":true,\"cycle\":" + String(cfg.cycleMode) + "}");
   });
-  server.on("/api/sensor", HTTP_GET, []() {             // Live-Sensor-Test
+  webOn("/api/sensor", HTTP_GET, []() {             // Live-Sensor-Test
     String j = "{\"tilt\":" + String(PIN_TILT >= 0 ? (tiltState ? 1 : 0) : -1) +
                ",\"edges\":" + String((unsigned long)tiltEdgeTotal) +
                ",\"per_sec\":" + String(tiltEdgesLastSecond()) +
@@ -3824,16 +3869,16 @@ void setupServer() {
                ",\"last\":\"" + String(since(lastShake) < 4000 ? "schuetteln" : since(lastRock) < 4000 ? "schaukeln" : "") + "\"}";
     sendJson(j);
   });
-  server.on("/api/double", []() { gestureDouble(); sendOk(); });
-  server.on("/api/long",   []() { gestureLong(); sendOk(); });
-  server.on("/api/info",   []() { enterInfo(); sendOk(); });
+  webOn("/api/double", []() { gestureDouble(); sendOk(); });
+  webOn("/api/long",   []() { gestureLong(); sendOk(); });
+  webOn("/api/info",   []() { enterInfo(); sendOk(); });
   // ?style=0…7 zeigt ein Design als Vorschau (bis die Uhr geschlossen wird), &save=1 speichert es
-  server.on("/api/clock",  []() { clockArgs(); showClock(); sendOk(); });
-  server.on("/api/clock/demo", []() { clockArgs(); showClock(); clockDemo(); sendOk(); });
-  server.on("/api/sleep",  []() { enterSleep(); sendOk(); });
-  server.on("/api/wake",   []() { wakeUp(); if (mode != M_FACE) setEmotion(E_NEUTRAL, 0); sendOk(); });
-  server.on("/api/vibrate", []() { vibrate(constrain((int)argMs(300), 10, 3000)); sendOk(); });
-  server.on("/api/beep", []() {
+  webOn("/api/clock",  []() { clockArgs(); showClock(); sendOk(); });
+  webOn("/api/clock/demo", []() { clockArgs(); showClock(); clockDemo(); sendOk(); });
+  webOn("/api/sleep",  []() { enterSleep(); sendOk(); });
+  webOn("/api/wake",   []() { wakeUp(); if (mode != M_FACE) setEmotion(E_NEUTRAL, 0); sendOk(); });
+  webOn("/api/vibrate", []() { vibrate(constrain((int)argMs(300), 10, 3000)); sendOk(); });
+  webOn("/api/beep", []() {
     uint16_t f = server.hasArg("f") ? constrain(server.arg("f").toInt(), 100, 8000) : 2800;
     beep(f, constrain((int)argMs(120), 10, 2000));
     sendOk();
@@ -3847,22 +3892,22 @@ void setupServer() {
     else startMarquee(t, m == "loop");
     sendOk();
   };
-  server.on("/api/text", textHandler);
-  server.on("/api/marquee", textHandler);
-  server.on("/api/notify", []() {
+  webOn("/api/text", textHandler);
+  webOn("/api/marquee", textHandler);
+  webOn("/api/notify", []() {
     String t = server.arg("text");
     if (!t.length()) t = "Neue Nachricht";
     notify(t);
     sendOk();
   });
-  server.on("/api/dim", []() {            // ?level=1..100 [&save=1]
+  webOn("/api/dim", []() {            // ?level=1..100 [&save=1]
     if (!server.hasArg("level")) { sendJson("{\"ok\":false,\"err\":\"level fehlt\"}", 400); return; }
     int lv = constrain(server.arg("level").toInt(), 1, 100);
     if (quietNow) cfg.quietBright = lv; else cfg.bright = lv;
     if (server.arg("save") == "1") saveSettings();
     sendOk();
   });
-  server.on("/api/quiet", []() {          // ?state=on|off|auto|toggle
+  webOn("/api/quiet", []() {          // ?state=on|off|auto|toggle
     String st = server.arg("state");
     if (st == "on") setQuiet(1);
     else if (st == "off") setQuiet(0);
@@ -3871,40 +3916,47 @@ void setupServer() {
     if (!quietNow && quietScreen) wakeUp();
     sendJson(String("{\"ok\":true,\"quiet\":") + (quietNow ? "true" : "false") + "}");
   });
-  server.on("/api/alarms", HTTP_GET, handlePlans);
-  server.on("/api/alarm/set", handleAlarmSet);
-  server.on("/api/alarm/del", handleAlarmDel);
-  server.on("/api/event/set", handleEventSet);
-  server.on("/api/event/del", handleEventDel);
-  server.on("/api/alarm/stop",   []() { stopRing(false); sendOk(); });
-  server.on("/api/alarm/snooze", []() { stopRing(true); sendOk(); });
+  webOn("/api/alarms", HTTP_GET, handlePlans);
+  webOn("/api/alarm/set", handleAlarmSet);
+  webOn("/api/alarm/del", handleAlarmDel);
+  webOn("/api/event/set", handleEventSet);
+  webOn("/api/event/del", handleEventDel);
+  webOn("/api/alarm/stop",   []() { stopRing(false); sendOk(); });
+  webOn("/api/alarm/snooze", []() { stopRing(true); sendOk(); });
   // Probelauf: ?i=Nr. testet den gespeicherten Eintrag. Mitgeschickte Felder (time, snd, emo …) gelten nur für den
   // Test, ohne i wird ein neuer, noch nicht gespeicherter Eintrag getestet. Gespeichert wird dabei nichts.
-  server.on("/api/alarm/test", []() {
+  webOn("/api/alarm/test", []() {
     int i = server.hasArg("i") ? server.arg("i").toInt() : -1;
     if (i >= alarmCount) { sendJson("{\"ok\":false,\"err\":\"unbekannter Wecker\"}", 400); return; }
     if (ringing()) stopRing(false, true);
     alarmFromArgs(alarms[TEST_ALARM], i);
     startRing(1, TEST_ALARM, true); sendOk();
   });
-  server.on("/api/event/test", []() {
+  webOn("/api/event/test", []() {
     int i = server.hasArg("i") ? server.arg("i").toInt() : -1;
     if (i >= eventCount) { sendJson("{\"ok\":false,\"err\":\"unbekannter Termin\"}", 400); return; }
     if (!eventFromArgs(events[TEST_EVENT], i)) { sendJson("{\"ok\":false,\"err\":\"Datum ungültig\"}", 400); return; }
     if (ringing()) stopRing(false, true);
     startRing(2, TEST_EVENT, true); sendOk();
   });
-  server.on("/api/sound", []() {                         // Melodie probehören: ?id=0..10, ?stop=1
+  webOn("/api/sound", []() {                         // Melodie probehören: ?id=0..10, ?stop=1
     if (ringing()) { sendJson("{\"ok\":false,\"err\":\"klingelt gerade\"}", 409); return; }
     if (server.hasArg("stop")) { stopMelody(); sendOk(); return; }
     int id = server.arg("id").toInt();
     if (id < 0 || id >= MELODY_COUNT) { sendJson("{\"ok\":false,\"err\":\"unbekannter Ton\"}", 400); return; }
     playMelody(id, 1); sendOk();
   });
-  server.on("/api/portal",  []() { sendOk(); startPortal(); });
-  server.on("/api/update", HTTP_POST, handleUpdateDone, handleUpdateUpload);
-  server.on("/api/restart", []() { sendOk(); restartAt = millis() + 500; });
-  server.on("/api/reset",   []() {
+  webOn("/api/portal",  []() { sendOk(); startPortal(); });
+  webOn("/api/webpw", HTTP_POST, []() {                    // Dashboard-Passwort setzen (leer = entfernen)
+    String pw = server.arg("pw");
+    if (pw.length() && (pw.length() < 4 || pw.length() > 32)) { sendJson("{\"ok\":false,\"err\":\"Passwort: 4 bis 32 Zeichen\"}", 400); return; }
+    cfg.webPw = pw; saveSettings(); otaPwChanged();
+    Serial.printf("[Zugang] Dashboard-Passwort %s\n", pw.length() ? "gesetzt" : "entfernt");
+    sendOk();
+  });
+  webOn("/api/update", HTTP_POST, handleUpdateDone, handleUpdateUpload);
+  webOn("/api/restart", []() { sendOk(); restartAt = millis() + 500; });
+  webOn("/api/reset",   []() {
     sendOk();
     factoryReset();
     showMsg("Zurückgesetzt", "Neustart...", "", 3000);
@@ -3982,6 +4034,14 @@ void handleSerialCmd(String line) {
     }
   }
   else if (cmd == "sound")  { if (!ringing()) playMelody(constrain((int)arg.toInt(), 0, MELODY_COUNT - 1), 1); }
+  else if (cmd == "passwort" || cmd == "webpw") {          // passwort <neu> | passwort aus
+    if (arg == "aus" || arg == "off" || arg == "-") cfg.webPw = "";
+    else if (arg.length() >= 4 && arg.length() <= 32) cfg.webPw = arg;
+    else { Serial.println("ERR passwort <4-32 Zeichen> | passwort aus"); return; }
+    saveSettings(); otaPwChanged();
+    Serial.printf("[Zugang] Dashboard-Passwort %s\n", cfg.webPw.length() ? "gesetzt (Benutzer admin)" : "entfernt");
+    return;
+  }
   else if (cmd == "portal") startPortal();
   else if (cmd == "restart") ESP.restart();
   else if (cmd == "status") {
@@ -3994,6 +4054,7 @@ void handleSerialCmd(String line) {
     Serial.println("         beep [f] | vibe [ms] | dim <1-100> | quiet on|off|auto|toggle | clock [0-7] [demo]");
     Serial.println("         tap | double | long | shake | info | sleep | wake | portal | restart | status");
     Serial.println("         alarm [stop|snooze|test <i>|event <i>] | sound <0-10>");
+    Serial.println("         passwort <neu> | passwort aus   (Dashboard, Benutzer admin)");
     Serial.print("Emotionen:");
     for (int i = 0; i < E_COUNT; i++) { Serial.print(' '); Serial.print(EMO_NAMES[i]); }
     Serial.println();

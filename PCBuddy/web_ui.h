@@ -72,6 +72,11 @@ const char PORTAL_HTML[] PROGMEM = R"HTML(<!doctype html><html lang="de"><head><
 <label>Name im Netzwerk (.local)</label><input type="text" name="host" id="host" placeholder="pcbuddy">
 <div class="hint">Danach erreichbar unter <b id="hostUrl">http://pcbuddy.local</b></div>
 <label>Display-Typ</label><select name="oled" id="oled"><option value="0">0,96" OLED I2C (SSD1306)</option><option value="1">1,3" OLED I2C (SH1106)</option></select>
+<h2 style="margin-top:18px">3 · Zugang zum Dashboard <span style="font-weight:400;color:var(--mut)">(optional)</span></h2>
+<label>Benutzer</label><input type="text" value="admin" readonly style="opacity:.7">
+<label>Passwort</label><input type="password" name="webpw" id="webpw" maxlength="32" autocomplete="new-password" placeholder="leer = kein Passwort">
+<div class="hint" id="wpHint">Leer lassen, wenn jeder in deinem WLAN das Dashboard öffnen darf. Mit Passwort fragt der Browser beim Öffnen nach Benutzer <b>admin</b> und Passwort. Später änderbar unter System → Zugang.</div>
+<label class="tg" id="wpClearRow" style="display:none;border:0;padding:4px 0"><span>Bisheriges Passwort entfernen</span><input type="checkbox" name="webpw_clear" value="1"></label>
 <div style="margin-top:16px"><button class="btn pri" style="width:100%" type="submit">Verbinden &amp; Neustart</button></div>
 </form></div>
 <div class="card" id="done" style="display:none"><h2>Gespeichert</h2><p id="doneTxt"></p></div>
@@ -87,7 +92,9 @@ async function scan(){const b=$('#scanBtn');b.disabled=true;$('#scanInfo').textC
   await new Promise(r=>setTimeout(r,700))}}catch(e){$('#scanInfo').textContent='Fehler beim Suchen'}b.disabled=false}
 function upd(){const h=($('#host').value||'pcbuddy').toLowerCase().replace(/[^a-z0-9-]/g,'')||'pcbuddy';$('#hostUrl').textContent='http://'+h+'.local'}
 $('#host').oninput=upd;
-fetch('/api/settings').then(r=>r.json()).then(s=>{$('#host').value=s.host||'pcbuddy';$('#oled').value=s.oled;if(s.ssid)$('#ssid').value=s.ssid;upd()}).catch(()=>{});
+fetch('/api/settings').then(r=>r.json()).then(s=>{$('#host').value=s.host||'pcbuddy';$('#oled').value=s.oled;if(s.ssid)$('#ssid').value=s.ssid;upd();
+ if(s.web_pw){$('#webpw').placeholder='leer = bisheriges Passwort behalten';$('#wpHint').innerHTML='Es ist bereits ein Passwort gesetzt. Ein neues eintragen, um es zu ändern (z.&nbsp;B. wenn du es vergessen hast).';$('#wpClearRow').style.display=''}}).catch(()=>{});
+$('#webpw').oninput=function(){if(this.value&&this.value.length<4)this.setCustomValidity('mindestens 4 Zeichen');else this.setCustomValidity('')};
 $('#f').onsubmit=async e=>{e.preventDefault();try{const r=await fetch('/api/wifi',{method:'POST',body:new URLSearchParams(new FormData($('#f')))});const j=await r.json();
  if(j.ok){$('#done').style.display='';$('#doneTxt').innerHTML='PCBuddy startet neu und verbindet sich mit <b>'+$('#ssid').value.replace(/</g,'&lt;')+'</b>.<br><br>Verbinde dein Handy/PC wieder mit deinem normalen WLAN und öffne <b>http://'+j.host+'.local</b> oder die IP, die auf dem Display angezeigt wird.';$('#f').style.display='none'}else toast(j.err||'Fehler',1)}catch(e){toast('Fehler',1)}};
 scan();
@@ -319,6 +326,14 @@ const char DASH_HTML[] PROGMEM = R"HTML(<!doctype html><html lang="de"><head><me
 <!-- ============ SYSTEM ============ -->
 <section class="panel" data-p="sys">
 <div class="card"><h2>Gerät</h2><div class="kv"><b>Firmware</b><span id="y_fw">–</span><b>Display</b><span id="y_oled">–</span><b>Freier Speicher</b><span id="y_heap">–</span><b>WLAN-Neuverbindungen</b><span id="y_wr">–</span><b>Laufzeit</b><span id="y_up">–</span></div></div>
+<div class="card"><h2>Zugang</h2>
+<div class="kv"><b>Benutzer</b><span>admin</span><b>Passwort</b><span id="z_state">–</span></div>
+<label>Neues Passwort</label><input type="password" id="z_pw" maxlength="32" autocomplete="new-password" placeholder="4 bis 32 Zeichen">
+<label>Wiederholen</label><input type="password" id="z_pw2" maxlength="32" autocomplete="new-password">
+<div class="flex" style="margin-top:10px"><button class="btn pri" onclick="setWebPw(0)">Passwort setzen</button><button class="btn bad" id="z_off" onclick="setWebPw(1)">Passwort entfernen</button></div>
+<p class="hint">Ist ein Passwort gesetzt, fragt der Browser beim Öffnen nach Benutzer <b>admin</b> und Passwort. Skripte brauchen dann
+<code>curl -u admin:PASSWORT …</code>. Passwort vergessen? 5 Sekunden auf den Touch halten öffnet das Setup-Portal, dort kannst du es neu setzen.
+Hinweis: Die Anmeldung schützt vor fremdem Zugriff im Heimnetz, ist aber nicht verschlüsselt (kein HTTPS).</p></div>
 <div class="card"><h2>Firmware-Update per WLAN</h2>
 <div class="kv"><b>Installiert</b><span id="u_fw">–</span><b>Update möglich</b><span id="u_ota">–</span></div>
 <div id="u_warn" class="warn" style="display:none"><b>Noch kein Update per WLAN möglich:</b> PCBuddy läuft mit einem Partitionsschema ohne zweiten App-Bereich (z.&nbsp;B. „Huge APP“).<br>
@@ -495,7 +510,7 @@ async function poll(){try{const s=await (await fetch('/api/status',{cache:'no-st
  $('#s_wifi').textContent=s.ssid?(s.ssid+' ('+s.rssi+' dBm)'):'nicht verbunden';$('#s_up').textContent=up(s.uptime);
  $('#w_ssid').textContent=s.ssid||'–';$('#w_rssi').textContent=s.ssid?s.rssi+' dBm':'–';$('#w_ip').textContent=s.ip;
  $('#y_fw').textContent='v'+s.fw;$('#u_fw').textContent='v'+s.fw+(s.part?' ('+s.part+')':'');
- $('#u_ota').textContent=s.ota?'ja':'nein';$('#u_warn').style.display=s.ota?'none':'';$('#u_btn').disabled=!s.ota||updBusy;$('#u_pwrow').style.display=s.upd_pw?'':'none';$('#y_oled').textContent=s.oled?'1,3" SH1106':'0,96" SSD1306';$('#y_heap').textContent=Math.round(s.heap/1024)+' kB';$('#y_wr').textContent=(s.wifi_reconnects||0)+(s.wifi_reason?' (letzter Grund '+s.wifi_reason+')':'');$('#y_up').textContent=up(s.uptime);
+ $('#u_ota').textContent=s.ota?'ja':'nein';$('#u_warn').style.display=s.ota?'none':'';$('#u_btn').disabled=!s.ota||updBusy;$('#u_pwrow').style.display=s.upd_pw?'':'none';$('#z_state').textContent=s.web_pw?'gesetzt ✓':'keins – jeder im WLAN hat Zugriff';$('#z_off').style.display=s.web_pw?'':'none';$('#y_oled').textContent=s.oled?'1,3" SH1106':'0,96" SSD1306';$('#y_heap').textContent=Math.round(s.heap/1024)+' kB';$('#y_wr').textContent=(s.wifi_reconnects||0)+(s.wifi_reason?' (letzter Grund '+s.wifi_reason+')':'');$('#y_up').textContent=up(s.uptime);
  const H='http://'+s.host+'.local';$('#ex').textContent=[
  'curl "'+H+'/api/emotion?name=heartbeat&ms=5000"','curl "'+H+'/api/text?mode=static&text=Gr%C3%BC%C3%9Fe%20%E2%82%AC"',
  'curl "'+H+'/api/text?mode=loop&speed=8&text=Hallo"','curl "'+H+'/api/notify?text=Build%20fertig"','curl "'+H+'/api/dim?level=20"',
@@ -540,6 +555,12 @@ async function waitReboot(){const t0=Date.now();await new Promise(r=>setTimeout(
   $('#u_msg').textContent='Fertig – läuft jetzt mit v'+s.fw;toast('Update erfolgreich: v'+s.fw);$('#u_bar').style.width='0';poll();return}catch(e){}
   await new Promise(r=>setTimeout(r,1500))}
  updBusy=false;$('#u_msg').textContent='PCBuddy antwortet noch nicht – Seite neu laden'}
+async function setWebPw(off){const a=$('#z_pw').value,b=$('#z_pw2').value;
+ if(!off){if(a.length<4){toast('Mindestens 4 Zeichen',1);return}if(a!==b){toast('Passwörter stimmen nicht überein',1);return}}
+ else if(!confirm('Passwort entfernen? Danach kann jeder im WLAN das Dashboard öffnen.'))return;
+ try{const j=await (await fetch('/api/webpw',{method:'POST',body:new URLSearchParams({pw:off?'':a})})).json();
+  if(!j.ok){toast(j.err||'Fehler',1);return}$('#z_pw').value=$('#z_pw2').value='';
+  toast(off?'Passwort entfernt':'Passwort gesetzt – bitte mit admin anmelden');if(!off)setTimeout(()=>location.reload(),1200);else poll()}catch(e){toast('Fehler',1)}}
 async function setUpdPw(){const v=$('#u_newpw').value;if(!confirm(v?'Update-Passwort setzen?':'Update-Passwort entfernen?'))return;
  try{const j=await (await fetch('/api/settings',{method:'POST',body:new URLSearchParams({upd_pw:v})})).json();toast(j.ok?(v?'Passwort gesetzt':'Passwort entfernt'):'Fehler',!j.ok);$('#u_newpw').value='';poll()}catch(e){toast('Fehler',1)}}
 

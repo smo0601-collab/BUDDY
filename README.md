@@ -199,11 +199,24 @@ Läuft PCBuddy bereits mit dem richtigen Partitionsschema, lade einfach die Date
 
 1. Beim ersten Start öffnet PCBuddy das WLAN **`PCBuddy-Setup`**.
 2. Mit dem Handy oder PC verbinden. Die Setup-Seite öffnet sich meist von selbst, sonst **http://192.168.4.1** aufrufen.
-3. Heim-WLAN wählen, Passwort, Gerätename (z. B. `pcbuddy`) und **Display-Typ** (0,96" oder 1,3") eintragen → *Verbinden*.
+3. Heim-WLAN wählen, Passwort, Gerätename (z. B. `pcbuddy`) und **Display-Typ** (0,96" oder 1,3") eintragen.
+   Optional ein **Passwort fürs Dashboard** (Benutzer `admin`). Leer lassen = kein Passwort. → *Verbinden*.
 4. PCBuddy startet neu und zeigt seine IP-Adresse. Das Dashboard ist dann erreichbar unter **http://pcbuddy.local**
    (oder unter der IP).
 
 Später lässt sich das Setup jederzeit wieder öffnen: **5 Sekunden auf den Touch-Sensor halten**.
+
+### Dashboard-Passwort
+
+Ist ein Passwort gesetzt, fragt der Browser beim Öffnen des Dashboards nach **Benutzer `admin`** und dem Passwort.
+Geschützt sind alle Seiten, alle API-Aufrufe und das Firmware-Update. Ändern oder entfernen lässt es sich unter
+**System → Zugang**.
+
+- **Passwort vergessen?** 5 Sekunden auf den Touch halten → Setup-Portal → neues Passwort eintragen (oder *entfernen*).
+  Wer am Gerät ist, darf das. Alternativ per USB-Seriell: `passwort NeuesPasswort` bzw. `passwort aus`.
+- Skripte und Home Assistant brauchen dann die Anmeldung, z. B. `curl -u admin:PASSWORT "http://pcbuddy.local/api/notify?text=Hallo"`.
+- Für Updates aus der Arduino IDE gilt dasselbe Passwort, solange kein eigenes Update-Passwort gesetzt ist.
+- Die Anmeldung schützt vor fremdem Zugriff im Heimnetz, ist aber nicht verschlüsselt (das Gerät kann kein HTTPS).
 
 ---
 
@@ -283,7 +296,7 @@ Im Browser unter **http://pcbuddy.local**. Die Oberfläche läuft komplett auf d
 | **Ruhemodus** | Zeitplan, Helligkeit, Anzeige, Ton/Vibration |
 | **Ort & Zeit** | Ortssuche fürs Wetter, Zeitzone, Gerätename |
 | **WLAN** | Verbindung anzeigen, Netz wechseln |
-| **System** | Firmware-Update, Neustart, Setup-Portal, Werkseinstellungen, API-Beispiele |
+| **System** | Zugang (Dashboard-Passwort), Firmware-Update, Neustart, Setup-Portal, Werkseinstellungen, API-Beispiele |
 
 Geänderte Einstellungen erkennt das Dashboard selbst und blendet eine *Speichern*-Leiste ein. Jeder Tab hat eine eigene
 Adresse, z. B. `http://pcbuddy.local/#text`.
@@ -384,7 +397,7 @@ Gesten, Sensoren, Wecker & Termine, WLAN, Update, Web-Server, Seriell). Jeder Ab
 
 ## Änderungen
 
-Siehe [**CHANGELOG.md**](CHANGELOG.md). Aktuelle Version: **v1.8.1**.
+Siehe [**CHANGELOG.md**](CHANGELOG.md). Aktuelle Version: **v1.9.0**.
 
 ## Lizenz
 

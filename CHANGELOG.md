@@ -2,6 +2,15 @@
 
 Alle Versionen von PCBuddy. Die neueste steht oben.
 
+## v1.9.0
+
+- **Dashboard-Passwort** (Benutzer `admin`): lässt sich schon bei der Ersteinrichtung im Setup-Portal eintragen –
+  leer = kein Passwort (wie bisher). Später unter **System → Zugang** ändern oder entfernen.
+- Mit Passwort sind alle Seiten, API-Aufrufe und der Firmware-Upload geschützt (HTTP-Anmeldung, der Browser fragt nach).
+- Passwort vergessen: 5 s Touch halten → Setup-Portal → neu setzen oder entfernen; oder seriell `passwort <neu>` / `passwort aus`.
+- Arduino-IDE-Update nutzt das Dashboard-Passwort, solange kein eigenes Update-Passwort gesetzt ist.
+- API: `/api/webpw` (POST `pw`), `web_pw` in Status und Einstellungen; Skripte melden sich mit `curl -u admin:PASSWORT` an.
+
 ## v1.8.1
 
 - **Behoben: Info-Folie (Wetter) ging manchmal von selbst an und blieb stehen.** Ursache: Die Touch-Auswertung hat schon
